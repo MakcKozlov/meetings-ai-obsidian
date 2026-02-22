@@ -19,7 +19,7 @@
     "note-taking",
     "productivity"
   ],
-  "author": "Maks Kozlov",
+  "author": "Max Kozlov",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.6",
