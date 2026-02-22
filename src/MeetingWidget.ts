@@ -702,17 +702,6 @@ export default class MeetingWidget extends MarkdownRenderChild {
       });
     }
 
-    // Settings gear (right-aligned)
-    const settingsBtn = tabBar.createEl('button', {
-      cls: 'mm-tab mm-tab-settings',
-    });
-    const settingsIcon = settingsBtn.createSpan({ cls: 'mm-tab-icon' });
-    settingsIcon.innerHTML = this.settingsSvg();
-    settingsBtn.addEventListener('click', () => {
-      (this.plugin.app as any).setting.open();
-      (this.plugin.app as any).setting.openTabById(this.plugin.manifest.id);
-    });
-
     // Tab content
     const tabContent = container.createDiv({ cls: 'mm-tab-content' });
 
@@ -999,7 +988,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
       }
     } catch (e: any) {
       console.error('Failed to stop recording:', e);
-      new Notice(`Meetings Ai: ${e?.message ?? e}`);
+      new Notice(`Meetings Ai: ${e?.message ?? e}`, 30000);
       this.setState({
         status: 'error',
         message: e?.message ?? String(e),

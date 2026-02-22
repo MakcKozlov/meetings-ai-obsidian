@@ -67,7 +67,7 @@ export default class AudioRecorder {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.mediaRecorder = this.setupMediaRecorder(stream);
-      this.mediaRecorder.start();
+      this.mediaRecorder.start(1000); // collect data every 1s to avoid empty recordings on iOS
     } catch (err) {
       console.error('Error accessing microphone:', err);
       throw err;
@@ -94,11 +94,6 @@ export default class AudioRecorder {
     return new Promise<Blob>((resolve, reject) => {
       if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
         throw new Error('Cannot stop: not currently recording');
-      }
-
-      // Request final data chunk before stopping (helps on iOS)
-      if (this.mediaRecorder.state === 'recording') {
-        this.mediaRecorder.requestData();
       }
 
       this.mediaRecorder.onstop = () => {

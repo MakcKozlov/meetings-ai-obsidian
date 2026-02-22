@@ -1,7 +1,7 @@
 {
 	"id": "meeting-ai",
 	"name": "Meetings Ai",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Record, transcribe, and summarize audio directly into your vault with custom assistants.",
 	"author": "Max Kozlov",

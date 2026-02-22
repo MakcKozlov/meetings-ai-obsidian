@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.0.1] — 2026-02-23
+
+### Fixed
+- iOS: Recording produced empty audio data (added timeslice to MediaRecorder)
+- Mobile: Tab bar overflow on small screens (tabs now flex-fill)
+
+### Changed
+- Removed settings gear button from widget tab bar
+
 ## [2.0.0] — 2026-02-22
 
 First major release as **Meetings Ai**. Complete redesign from the original Magic Mic fork.
