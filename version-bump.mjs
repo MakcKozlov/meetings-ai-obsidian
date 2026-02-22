@@ -1,3 +1,5 @@
+// Syncs version from package.json into manifest.json and versions.json
+// Runs automatically via "npm version" script
 import { readFileSync, writeFileSync } from 'fs';
 
 const targetVersion = process.env.npm_package_version;
