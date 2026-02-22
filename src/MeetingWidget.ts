@@ -6,21 +6,30 @@ import {
   TFile,
 } from 'obsidian';
 import type MeetingAIPlugin from './Plugin';
+import type { TranscriptSegment } from './transcribeAudio';
 
 export type WidgetState =
   | { status: 'idle' }
   | { status: 'recording'; elapsed: number }
   | { status: 'paused'; elapsed: number }
   | { status: 'processing'; message: string }
-  | { status: 'done'; summary: string; transcript: string };
+  | { status: 'done'; summary: string; transcript: string }
+  | { status: 'error'; message: string; audioFilePath: string | null };
 
 interface ResultEntry {
   summary: string;
   transcript: string;
+  segments: TranscriptSegment[];
   audioFilePath: string | null;
 }
 
 export default class MeetingWidget extends MarkdownRenderChild {
+  /** Static cache: survives widget re-creation on tab switch / re-render */
+  private static resultCache = new Map<string, ResultEntry[]>();
+  private static notesCache = new Map<string, string>();
+  private static descriptionCache = new Map<string, string>();
+  private static errorCache = new Map<string, { message: string; audioFilePath: string | null }>();
+
   private plugin: MeetingAIPlugin;
   private ctx: MarkdownPostProcessorContext;
   private state: WidgetState = { status: 'idle' };
@@ -32,9 +41,19 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private results: ResultEntry[] = [];
   /** User notes content (persisted to note file) */
   private notesContent: string = '';
+  /** Meeting description (persisted to note file) */
+  private meetingDescription: string = '';
+  /** Pending segment to scroll to after tab switch */
+  private pendingScrollToSegment: number | null = null;
   /** Debounced save for notes */
   private saveNotesDebounced = debounce(
     () => this.saveNotesToFile(),
+    1000,
+    true,
+  );
+  /** Debounced save for description */
+  private saveDescriptionDebounced = debounce(
+    () => this.saveDescriptionToFile(),
     1000,
     true,
   );
@@ -67,21 +86,55 @@ export default class MeetingWidget extends MarkdownRenderChild {
   }
 
   onload() {
+    // Restore from static cache first (instant, no async)
+    const cachedResults = MeetingWidget.resultCache.get(this.ctx.sourcePath);
+    const cachedNotes = MeetingWidget.notesCache.get(this.ctx.sourcePath);
+    const cachedDesc = MeetingWidget.descriptionCache.get(this.ctx.sourcePath);
+    const cachedError = MeetingWidget.errorCache.get(this.ctx.sourcePath);
+
+    if (cachedResults && cachedResults.length > 0) {
+      this.results = cachedResults;
+      if (cachedNotes) this.notesContent = cachedNotes;
+      if (cachedDesc) this.meetingDescription = cachedDesc;
+      const last = this.results[this.results.length - 1];
+      this.state = {
+        status: 'done',
+        summary: last.summary,
+        transcript: last.transcript,
+      };
+      this.render();
+    } else if (cachedError) {
+      // Restore error state (e.g. transcription failed, user switched pages)
+      if (cachedNotes) this.notesContent = cachedNotes;
+      if (cachedDesc) this.meetingDescription = cachedDesc;
+      this.state = {
+        status: 'error',
+        message: cachedError.message,
+        audioFilePath: cachedError.audioFilePath,
+      };
+      this.render();
+    }
+    // Also load from file (in case cache is empty, e.g. fresh Obsidian start)
     this.loadDataFromFile();
   }
 
   // ─── Persistence markers ───
-  // Data is stored as readable markdown in the .md file so it's
-  // accessible to databases and AI tools.
-
-  private static readonly NOTES_START = '%%meeting-ai-notes-start%%';
-  private static readonly NOTES_END = '%%meeting-ai-notes-end%%';
-  private static readonly SUMMARY_START = '%%meeting-ai-summary-start%%';
-  private static readonly SUMMARY_END = '%%meeting-ai-summary-end%%';
-  private static readonly TRANSCRIPT_START = '%%meeting-ai-transcript-start%%';
-  private static readonly TRANSCRIPT_END = '%%meeting-ai-transcript-end%%';
-  private static readonly AUDIO_START = '%%meeting-ai-audio-start%%';
-  private static readonly AUDIO_END = '%%meeting-ai-audio-end%%';
+  // Data is stored in the .md file inside HTML comments so it's
+  // completely hidden in Reading mode but accessible via source.
+  private static readonly NOTES_START = '<!--meeting-ai-notes';
+  private static readonly NOTES_END = 'meeting-ai-notes-end-->';
+  private static readonly SUMMARY_START = '<!--meeting-ai-summary';
+  private static readonly SUMMARY_END = 'meeting-ai-summary-end-->';
+  private static readonly TRANSCRIPT_START = '<!--meeting-ai-transcript';
+  private static readonly TRANSCRIPT_END = 'meeting-ai-transcript-end-->';
+  private static readonly AUDIO_START = '<!--meeting-ai-audio';
+  private static readonly AUDIO_END = 'meeting-ai-audio-end-->';
+  private static readonly SEGMENTS_START = '<!--meeting-ai-segments';
+  private static readonly SEGMENTS_END = 'meeting-ai-segments-end-->';
+  private static readonly DESC_START = '<!--meeting-ai-description';
+  private static readonly DESC_END = 'meeting-ai-description-end-->';
+  private static readonly ERROR_START = '<!--meeting-ai-error';
+  private static readonly ERROR_END = 'meeting-ai-error-end-->';
 
   /**
    * Resolve the TFile for this widget's note.
@@ -134,6 +187,12 @@ export default class MeetingWidget extends MarkdownRenderChild {
       this.notesContent = notes;
     }
 
+    // Load description
+    const desc = MeetingWidget.extractBetween(content, MeetingWidget.DESC_START, MeetingWidget.DESC_END);
+    if (desc !== null) {
+      this.meetingDescription = desc;
+    }
+
     // Load summary
     const summary = MeetingWidget.extractBetween(content, MeetingWidget.SUMMARY_START, MeetingWidget.SUMMARY_END);
 
@@ -143,14 +202,28 @@ export default class MeetingWidget extends MarkdownRenderChild {
     // Load audio paths
     const audioPaths = MeetingWidget.extractBetween(content, MeetingWidget.AUDIO_START, MeetingWidget.AUDIO_END);
 
+    // Load segments
+    const segmentsRaw = MeetingWidget.extractBetween(content, MeetingWidget.SEGMENTS_START, MeetingWidget.SEGMENTS_END);
+    let segments: TranscriptSegment[] = [];
+    if (segmentsRaw) {
+      try { segments = JSON.parse(segmentsRaw); } catch { /* backward compat */ }
+    }
+
     // If we have summary or transcript, restore the result
     if (summary !== null || transcript !== null) {
       const audioFilePath = audioPaths?.trim() || null;
       this.results = [{
         summary: summary ?? '',
         transcript: transcript ?? '',
+        segments,
         audioFilePath,
       }];
+      // Update static cache
+      MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
+      MeetingWidget.notesCache.set(this.ctx.sourcePath, this.notesContent);
+      MeetingWidget.descriptionCache.set(this.ctx.sourcePath, this.meetingDescription);
+      // Clear any stale error since we have results
+      MeetingWidget.errorCache.delete(this.ctx.sourcePath);
       const last = this.results[this.results.length - 1];
       this.state = {
         status: 'done',
@@ -158,16 +231,29 @@ export default class MeetingWidget extends MarkdownRenderChild {
         transcript: last.transcript,
       };
       this.render();
+      return; // don't check for error state if we have results
+    }
+
+    // Load persisted error state (transcription failed, audio saved)
+    const errorRaw = MeetingWidget.extractBetween(content, MeetingWidget.ERROR_START, MeetingWidget.ERROR_END);
+    if (errorRaw) {
+      try {
+        const errorData = JSON.parse(errorRaw) as { message: string; audioFilePath: string | null };
+        MeetingWidget.errorCache.set(this.ctx.sourcePath, errorData);
+        this.state = {
+          status: 'error',
+          message: errorData.message,
+          audioFilePath: errorData.audioFilePath,
+        };
+        this.render();
+      } catch {
+        // corrupted error data, ignore
+      }
     }
   }
 
   // ─── Save all data to file ───
 
-  /**
-   * Save results (summary, transcript, audio paths) as readable markdown
-   * in the .md file. This ensures the data is available for databases
-   * and AI processing.
-   */
   private async saveResultsToFile() {
     const file = this.getNoteFile();
     if (!file) return;
@@ -190,21 +276,85 @@ export default class MeetingWidget extends MarkdownRenderChild {
       content = MeetingWidget.replaceBlock(content, MeetingWidget.AUDIO_START, MeetingWidget.AUDIO_END, audioPaths);
     }
 
+    // Save segments as JSON
+    const allSegments = this.results.flatMap((r) => r.segments ?? []);
+    if (allSegments.length > 0) {
+      content = MeetingWidget.replaceBlock(
+        content,
+        MeetingWidget.SEGMENTS_START,
+        MeetingWidget.SEGMENTS_END,
+        JSON.stringify(allSegments),
+      );
+    }
+
     await this.plugin.app.vault.modify(file, content);
   }
 
   private async saveNotesToFile() {
+    MeetingWidget.notesCache.set(this.ctx.sourcePath, this.notesContent);
     const file = this.getNoteFile();
     if (!file) return;
     let content = await this.plugin.app.vault.read(file);
-
     content = MeetingWidget.replaceBlock(content, MeetingWidget.NOTES_START, MeetingWidget.NOTES_END, this.notesContent);
-
     await this.plugin.app.vault.modify(file, content);
+  }
+
+  private async saveDescriptionToFile() {
+    MeetingWidget.descriptionCache.set(this.ctx.sourcePath, this.meetingDescription);
+    const file = this.getNoteFile();
+    if (!file) return;
+    let content = await this.plugin.app.vault.read(file);
+    content = MeetingWidget.replaceBlock(content, MeetingWidget.DESC_START, MeetingWidget.DESC_END, this.meetingDescription);
+    await this.plugin.app.vault.modify(file, content);
+  }
+
+  private async saveErrorToFile(message: string, audioFilePath: string | null) {
+    const file = this.getNoteFile();
+    if (!file) return;
+    try {
+      let content = await this.plugin.app.vault.read(file);
+      const errorData = JSON.stringify({ message, audioFilePath });
+      content = MeetingWidget.replaceBlock(content, MeetingWidget.ERROR_START, MeetingWidget.ERROR_END, errorData);
+      await this.plugin.app.vault.modify(file, content);
+    } catch (e) {
+      console.warn('Meeting AI: failed to save error state', e);
+    }
+  }
+
+  private async clearErrorFromFile() {
+    const file = this.getNoteFile();
+    if (!file) return;
+    try {
+      const content = await this.plugin.app.vault.read(file);
+      if (content.indexOf(MeetingWidget.ERROR_START) === -1) return;
+      const startIdx = content.indexOf(MeetingWidget.ERROR_START);
+      const endIdx = content.indexOf(MeetingWidget.ERROR_END);
+      if (startIdx !== -1 && endIdx !== -1) {
+        let before = content.substring(0, startIdx);
+        let after = content.substring(endIdx + MeetingWidget.ERROR_END.length);
+        if (before.endsWith('\n')) before = before.slice(0, -1);
+        if (after.startsWith('\n')) after = after.slice(1);
+        await this.plugin.app.vault.modify(file, before + after);
+      }
+    } catch (e) {
+      console.warn('Meeting AI: failed to clear error state', e);
+    }
   }
 
   setState(newState: WidgetState) {
     this.state = newState;
+    // Persist error state so it survives page switches
+    if (newState.status === 'error') {
+      MeetingWidget.errorCache.set(this.ctx.sourcePath, {
+        message: newState.message,
+        audioFilePath: newState.audioFilePath,
+      });
+      this.saveErrorToFile(newState.message, newState.audioFilePath);
+    } else if (newState.status === 'done' || newState.status === 'idle') {
+      // Clear persisted error when we recover or go to idle via new recording
+      MeetingWidget.errorCache.delete(this.ctx.sourcePath);
+      this.clearErrorFromFile();
+    }
     this.render();
   }
 
@@ -213,13 +363,26 @@ export default class MeetingWidget extends MarkdownRenderChild {
   }
 
   /** Called by onStopClick after processing completes */
-  addResult(summary: string, transcript: string, audioFilePath: string | null) {
-    this.results.push({ summary, transcript, audioFilePath });
+  async addResult(
+    summary: string,
+    transcript: string,
+    segments: TranscriptSegment[],
+    audioFilePath: string | null,
+  ) {
+    this.results.push({ summary, transcript, segments, audioFilePath });
     this.state = { status: 'done', summary, transcript };
     this.activeTab = 'summary';
-    // Persist results as markdown to the .md file
-    this.saveResultsToFile();
+    // Update static cache immediately (survives widget re-creation)
+    MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
+    MeetingWidget.notesCache.set(this.ctx.sourcePath, this.notesContent);
+    MeetingWidget.descriptionCache.set(this.ctx.sourcePath, this.meetingDescription);
     this.render();
+    // Persist results as markdown to the .md file
+    try {
+      await this.saveResultsToFile();
+    } catch (e) {
+      console.error('Meeting AI: failed to save results to file', e);
+    }
   }
 
   updateElapsed(seconds: number) {
@@ -247,6 +410,12 @@ export default class MeetingWidget extends MarkdownRenderChild {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   }
 
+  private formatTimestamp(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
   private render() {
     this.wrapperEl.empty();
     this.wrapperEl.removeClass(
@@ -255,6 +424,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
       'mm-state-paused',
       'mm-state-processing',
       'mm-state-done',
+      'mm-state-error',
     );
     this.wrapperEl.addClass(`mm-state-${this.state.status}`);
 
@@ -273,6 +443,9 @@ export default class MeetingWidget extends MarkdownRenderChild {
         break;
       case 'done':
         this.renderDone();
+        break;
+      case 'error':
+        this.renderError();
         break;
     }
   }
@@ -428,6 +601,49 @@ export default class MeetingWidget extends MarkdownRenderChild {
     });
   }
 
+  // ─── Error state — audio saved but transcription failed ───
+
+  private renderError() {
+    const errorState = this.state as { status: 'error'; message: string; audioFilePath: string | null };
+    const container = this.wrapperEl.createDiv({ cls: 'mm-error-container' });
+
+    // Error icon + message
+    const errorRow = container.createDiv({ cls: 'mm-error-row' });
+    const errorIcon = errorRow.createSpan({ cls: 'mm-error-icon' });
+    errorIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>`;
+    errorRow.createSpan({
+      text: errorState.message,
+      cls: 'mm-error-text',
+    });
+
+    // Info about saved audio
+    if (errorState.audioFilePath) {
+      container.createDiv({
+        text: `Аудио сохранено: ${errorState.audioFilePath}`,
+        cls: 'mm-error-audio-info',
+      });
+    }
+
+    // Retry button
+    const btnRow = container.createDiv({ cls: 'mm-btn-row' });
+    if (errorState.audioFilePath) {
+      const retryBtn = btnRow.createEl('button', {
+        cls: 'mm-btn mm-btn-retry',
+      });
+      const retryIcon = retryBtn.createSpan({ cls: 'mm-icon' });
+      retryIcon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>`;
+      retryBtn.createSpan({ text: 'Повторить расшифровку', cls: 'mm-btn-label' });
+      retryBtn.addEventListener('click', () => this.onRetryClick(errorState.audioFilePath!));
+    }
+
+    // Dismiss / start new recording
+    const newBtn = btnRow.createEl('button', { cls: 'mm-btn' });
+    const micIcon = newBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
+    micIcon.innerHTML = this.micSvg();
+    newBtn.createSpan({ text: 'Новая запись', cls: 'mm-btn-label' });
+    newBtn.addEventListener('click', () => this.onStartClick());
+  }
+
   // ─── Done state — tabs: Summary / Notes / Transcript ───
 
   private renderDone() {
@@ -446,39 +662,79 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private renderTabs(container: HTMLElement) {
     const hasAudio = this.results.some((r) => r.audioFilePath);
 
+    // Meeting description input
+    const descRow = container.createDiv({ cls: 'mm-description-row' });
+    const descInput = descRow.createEl('input', {
+      cls: 'mm-description-input',
+      attr: {
+        type: 'text',
+        placeholder: 'Описание встречи...',
+      },
+    });
+    descInput.value = this.meetingDescription;
+    descInput.addEventListener('input', () => {
+      this.meetingDescription = descInput.value;
+      this.saveDescriptionDebounced();
+    });
+
+    // Tab bar with icons
     const tabBar = container.createDiv({ cls: 'mm-tab-bar' });
-    const tabs: { id: typeof this.activeTab; label: string }[] = [
-      { id: 'summary', label: 'Summary' },
-      { id: 'notes', label: 'Notes' },
-      { id: 'transcript', label: 'Transcript' },
+
+    const tabsLeft: { id: typeof this.activeTab; label: string; icon: string }[] = [
+      { id: 'summary', label: 'Summary', icon: this.summarySvg() },
+      { id: 'notes', label: 'Notes', icon: this.notesSvg() },
+      { id: 'transcript', label: 'Transcript', icon: this.transcriptSvg() },
     ];
     if (hasAudio) {
-      tabs.push({ id: 'audio', label: 'Audio' });
+      tabsLeft.push({ id: 'audio', label: 'Audio', icon: this.audioSvg() });
     }
 
-    for (const tab of tabs) {
+    for (const tab of tabsLeft) {
       const tabEl = tabBar.createEl('button', {
         cls: `mm-tab ${this.activeTab === tab.id ? 'mm-tab-active' : ''}`,
-        text: tab.label,
       });
+      const iconSpan = tabEl.createSpan({ cls: 'mm-tab-icon' });
+      iconSpan.innerHTML = tab.icon;
+      tabEl.createSpan({ text: tab.label, cls: 'mm-tab-label' });
       tabEl.addEventListener('click', () => {
         this.activeTab = tab.id;
         this.render();
       });
     }
 
+    // Settings gear (right-aligned)
+    const settingsBtn = tabBar.createEl('button', {
+      cls: 'mm-tab mm-tab-settings',
+    });
+    const settingsIcon = settingsBtn.createSpan({ cls: 'mm-tab-icon' });
+    settingsIcon.innerHTML = this.settingsSvg();
+    settingsBtn.addEventListener('click', () => {
+      (this.plugin.app as any).setting.open();
+      (this.plugin.app as any).setting.openTabById(this.plugin.manifest.id);
+    });
+
+    // Tab content
     const tabContent = container.createDiv({ cls: 'mm-tab-content' });
 
     const allSummaries = this.results.map((r) => r.summary).join('\n\n---\n\n');
-    const allTranscripts = this.results
-      .map((r) => r.transcript)
-      .join('\n\n---\n\n');
 
     switch (this.activeTab) {
-      case 'summary':
-        tabContent.createDiv({ cls: 'mm-tab-panel mm-summary-panel' }).innerHTML =
-          this.markdownToHtml(allSummaries);
+      case 'summary': {
+        const summaryPanel = tabContent.createDiv({ cls: 'mm-tab-panel mm-summary-panel' });
+        summaryPanel.innerHTML = this.markdownToHtml(allSummaries);
+
+        // Footnote click handler — switch to transcript and scroll
+        summaryPanel.addEventListener('click', (e) => {
+          const badge = (e.target as HTMLElement).closest('.mm-footnote-badge');
+          if (!badge) return;
+          const segId = badge.getAttribute('data-segment-id');
+          if (!segId) return;
+          this.activeTab = 'transcript';
+          this.pendingScrollToSegment = parseInt(segId, 10);
+          this.render();
+        });
         break;
+      }
       case 'notes': {
         const notesPanel = tabContent.createDiv({
           cls: 'mm-tab-panel mm-notes-panel',
@@ -498,15 +754,59 @@ export default class MeetingWidget extends MarkdownRenderChild {
         setTimeout(() => textarea.focus(), 50);
         break;
       }
-      case 'transcript':
-        tabContent.createDiv({
+      case 'transcript': {
+        const transcriptPanel = tabContent.createDiv({
           cls: 'mm-tab-panel mm-transcript-panel',
-        }).innerHTML = this.markdownToHtml(allTranscripts);
+        });
+        transcriptPanel.innerHTML = this.renderTranscriptContent();
+
+        // Scroll to pending segment
+        if (this.pendingScrollToSegment !== null) {
+          const targetId = this.pendingScrollToSegment;
+          this.pendingScrollToSegment = null;
+          requestAnimationFrame(() => {
+            const target = transcriptPanel.querySelector(
+              `[data-segment-id="${targetId}"]`,
+            );
+            if (target) {
+              target.classList.add('mm-segment-highlight');
+              target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              setTimeout(() => target.classList.remove('mm-segment-highlight'), 2500);
+            }
+          });
+        }
         break;
+      }
       case 'audio':
         this.renderAudioTab(tabContent);
         break;
     }
+  }
+
+  /** Render transcript: with segments (timestamped) or plain fallback */
+  private renderTranscriptContent(): string {
+    const allSegments = this.results.flatMap((r) => r.segments ?? []);
+
+    if (allSegments.length === 0) {
+      // Fallback for legacy results without segments
+      const allTranscripts = this.results
+        .map((r) => r.transcript)
+        .join('\n\n---\n\n');
+      return this.markdownToHtml(allTranscripts);
+    }
+
+    // Render segments with timestamps and anchor IDs
+    return allSegments.map((seg) => {
+      const escaped = seg.text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      const timestamp = this.formatTimestamp(seg.start);
+      return `<div class="mm-segment" data-segment-id="${seg.id}">` +
+        `<span class="mm-segment-time">${timestamp}</span>` +
+        `<span class="mm-segment-text">${escaped}</span>` +
+        `</div>`;
+    }).join('');
   }
 
   private renderAudioTab(tabContent: HTMLElement) {
@@ -545,24 +845,86 @@ export default class MeetingWidget extends MarkdownRenderChild {
     }
   }
 
-  /** Simple markdown → HTML (basic formatting) */
+  /** Simple markdown -> HTML with footnote badge support */
   private markdownToHtml(md: string): string {
     if (!md) return '<p style="color:var(--text-muted)">No content yet.</p>';
-    return md
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-      .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-      .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/^- (.+)$/gm, '<li>$1</li>')
-      .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-      .replace(/\n\n/g, '</p><p>')
-      .replace(/\n/g, '<br>')
-      .replace(/^/, '<p>')
-      .replace(/$/, '</p>');
+
+    const escape = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const lines = md.split('\n');
+    const html: string[] = [];
+    let inList = false;
+    let inTaskSection = false;
+
+    for (const raw of lines) {
+      const line = escape(raw);
+
+      // Apply inline formatting
+      let fmt = line
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+      // Replace {1,2,3} segment references with clickable badges
+      fmt = fmt.replace(
+        /\{(\d+(?:,\s*\d+)*)\}/g,
+        (_match, segIds: string) => {
+          const ids = segIds.split(',').map((s: string) => s.trim());
+          return '<span class="mm-footnote-group">' +
+            ids.map((id: string) =>
+              `<span class="mm-footnote-badge" data-segment-id="${id}">${id}</span>`,
+            ).join('') +
+            '</span>';
+        },
+      );
+
+      // Track if we're in the tasks section
+      const h2Match = fmt.match(/^##\s+(.+)$/);
+      if (h2Match) {
+        inTaskSection = /задач/i.test(h2Match[1]);
+      }
+
+      // Bullet list item (- or •)
+      const bulletMatch = fmt.match(/^[-•]\s+(.+)$/);
+      if (bulletMatch) {
+        if (!inList) { html.push('<ul>'); inList = true; }
+        const content = bulletMatch[1];
+
+        // Render as checkbox if in task section
+        if (inTaskSection) {
+          html.push(
+            `<li class="mm-task-item">` +
+            `<input type="checkbox" class="mm-task-checkbox" />` +
+            `<span class="mm-task-text">${content}</span></li>`,
+          );
+        } else {
+          html.push(`<li>${content}</li>`);
+        }
+        continue;
+      }
+
+      // Close list if we were in one
+      if (inList) { html.push('</ul>'); inList = false; }
+
+      // Empty line — skip (no extra spacing)
+      if (fmt.trim() === '') continue;
+
+      // Headings
+      const h3 = fmt.match(/^###\s+(.+)$/);
+      if (h3) { html.push(`<h3>${h3[1]}</h3>`); continue; }
+      if (h2Match) { html.push(`<h2>${h2Match[1]}</h2>`); continue; }
+      const h1 = fmt.match(/^#\s+(.+)$/);
+      if (h1) { html.push(`<h1>${h1[1]}</h1>`); continue; }
+
+      // Horizontal rule
+      if (/^---+$/.test(fmt.trim())) { html.push('<hr>'); continue; }
+
+      // Regular paragraph
+      html.push(`<p>${fmt}</p>`);
+    }
+
+    if (inList) html.push('</ul>');
+    return html.join('');
   }
 
   // ─── Event handlers ───
@@ -614,25 +976,67 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
       const result = await this.plugin.stopMeetingRecording();
 
-      if (result) {
-        this.addResult(result.summary, result.transcript, result.audioFilePath);
-      } else {
+      if (!result) {
         this.setState({ status: 'idle' });
+        return;
+      }
+
+      if (result.ok) {
+        await this.addResult(
+          result.summary,
+          result.transcript,
+          result.segments,
+          result.audioFilePath,
+        );
+      } else {
+        // Transcription/summarization failed but audio is saved
+        new Notice(`Meeting AI: ${result.error}`);
+        this.setState({
+          status: 'error',
+          message: result.error,
+          audioFilePath: result.audioFilePath,
+        });
       }
     } catch (e: any) {
       console.error('Failed to stop recording:', e);
       new Notice(`Meeting AI: ${e?.message ?? e}`);
-      if (this.results.length > 0) {
-        const last = this.results[this.results.length - 1];
-        this.state = {
-          status: 'done',
-          summary: last.summary,
-          transcript: last.transcript,
-        };
-        this.render();
+      this.setState({
+        status: 'error',
+        message: e?.message ?? String(e),
+        audioFilePath: null,
+      });
+    }
+  }
+
+  private async onRetryClick(audioFilePath: string) {
+    try {
+      this.setState({ status: 'processing', message: 'Повторная расшифровка...' });
+
+      const result = await this.plugin.retryFromAudioFile(audioFilePath);
+
+      if (result.ok) {
+        await this.addResult(
+          result.summary,
+          result.transcript,
+          result.segments,
+          result.audioFilePath,
+        );
       } else {
-        this.setState({ status: 'idle' });
+        new Notice(`Meeting AI: ${result.error}`);
+        this.setState({
+          status: 'error',
+          message: result.error,
+          audioFilePath,
+        });
       }
+    } catch (e: any) {
+      console.error('Meeting AI: retry failed', e);
+      new Notice(`Meeting AI: ${e?.message ?? e}`);
+      this.setState({
+        status: 'error',
+        message: e?.message ?? String(e),
+        audioFilePath,
+      });
     }
   }
 
@@ -670,5 +1074,25 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private playSvg(): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+  }
+
+  private summarySvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>`;
+  }
+
+  private notesSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`;
+  }
+
+  private transcriptSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6H3"/><path d="M21 12H8"/><path d="M21 18H8"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>`;
+  }
+
+  private audioSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>`;
+  }
+
+  private settingsSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>`;
   }
 }

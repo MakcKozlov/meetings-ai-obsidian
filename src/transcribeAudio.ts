@@ -2,6 +2,18 @@ import OpenAI from 'openai';
 import { encode, decode } from 'gpt-tokenizer';
 import { FileLike } from 'openai/uploads';
 
+export interface TranscriptSegment {
+  id: number;
+  start: number; // seconds
+  end: number; // seconds
+  text: string;
+}
+
+export interface TranscriptionResult {
+  text: string;
+  segments: TranscriptSegment[];
+}
+
 export interface TranscriptionOptions {
   prompt: string;
   audioFiles: FileLike[];
@@ -12,27 +24,52 @@ export interface TranscriptionOptions {
 const WHISPER_TOKEN_LIMIT = 224;
 
 /**
- * Transcribe an audio file with OpenAI's Whisper model
+ * Transcribe an audio file with OpenAI's Whisper model.
+ *
+ * Uses `verbose_json` response format to get segment-level timestamps
+ * for cross-referencing summary points to transcript sections.
  *
  * Handles splitting the file into chunks, processing each chunk, and
- * concatenating the results.
+ * concatenating the results with globally unique segment IDs.
  */
 export default async function transcribeAudio(
   client: OpenAI,
   { prompt, audioFiles, onChunkStart }: TranscriptionOptions,
-): Promise<string> {
-  let transcript = '';
+): Promise<TranscriptionResult> {
+  let fullText = '';
+  let allSegments: TranscriptSegment[] = [];
+  let segmentIdOffset = 0;
+
   for (const [i, file] of audioFiles.entries()) {
     if (onChunkStart) onChunkStart(i, audioFiles.length);
-    const res = await client.audio.transcriptions.create({
+
+    const res = (await client.audio.transcriptions.create({
       model: 'whisper-1',
       file,
-      prompt: mixBasePromptAndTranscript(prompt, transcript),
-    });
+      prompt: mixBasePromptAndTranscript(prompt, fullText),
+      response_format: 'verbose_json',
+      timestamp_granularities: ['segment'],
+    } as any)) as any; // SDK types don't fully cover verbose_json shape
+
+    const chunkText = (res.text as string ?? '').trim();
     const sep = i === 0 ? '' : ' ';
-    transcript += sep + res.text.trim();
+    fullText += sep + chunkText;
+
+    // Extract segments and reindex across chunks
+    const rawSegments: any[] = res.segments ?? [];
+    for (let j = 0; j < rawSegments.length; j++) {
+      const seg = rawSegments[j];
+      allSegments.push({
+        id: segmentIdOffset + j,
+        start: seg.start as number,
+        end: seg.end as number,
+        text: (seg.text as string ?? '').trim(),
+      });
+    }
+    segmentIdOffset = allSegments.length;
   }
-  return transcript;
+
+  return { text: fullText, segments: allSegments };
 }
 
 /**

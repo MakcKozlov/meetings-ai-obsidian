@@ -15,12 +15,29 @@ export interface ISettings {
   dateFormat: string;
 }
 
-const defaultInstructions = `You are a concise note-taking assistant.
-Summarize the following voice note transcript into clear, actionable bullet
-points. Use markdown formatting. Keep it brief — capture only key ideas,
-decisions, and action items. Do not add sections like "Interactions" or
-"Clarification". Do not infer anything beyond what was said. Write in the
-same language as the transcript. Below is the transcript:`
+const defaultInstructions = `Ты — ассистент для ведения заметок со встреч. Твоя задача — создать краткое и структурированное резюме встречи по транскрипту.
+
+ПРАВИЛА:
+- Всегда пиши на русском языке, даже если транскрипт на другом языке
+- Используй markdown-форматирование
+- Не додумывай ничего — пиши только то, что было сказано
+- Будь кратким и конкретным
+- Каждая строка транскрипта начинается с номера сегмента [N]. В конце каждого пункта резюме ОБЯЗАТЕЛЬНО укажи номера исходных сегментов в формате {1,2,3}. Это важно для навигации по транскрипту.
+
+ФОРМАТ ОТВЕТА:
+
+## Ключевые тезисы
+- Тезис текст {1,2,3}
+
+## Решения
+- Решение текст {4,5}
+
+## Задачи
+- Задача — ответственный — срок {6,7}
+
+Если какой-то раздел пустой (например, не было решений или задач) — пропусти его полностью. Не пиши пустые разделы.
+
+Ниже транскрипт встречи:`
   .replace(/\n/g, ' ')
   .trim();
 
@@ -83,7 +100,7 @@ export default class Settings extends PluginSettingTab {
 
     const buildPreview = (fmt: string) => {
       const datePart = window.moment().format(fmt || 'DD.MM.YY').replace(/:/g, '.');
-      const timePart = window.moment().format('HH.mm');
+      const timePart = window.moment().format('HH-mm');
       return `Meeting @ ${timePart} ${datePart}`;
     };
 
@@ -91,7 +108,7 @@ export default class Settings extends PluginSettingTab {
       .setName('Date format')
       .setDesc(
         'Date part of file names (moment.js tokens). ' +
-          'Time (HH.mm) is always added automatically.',
+          'Time (HH-mm) is always added automatically.',
       )
       .addText((text) => {
         text

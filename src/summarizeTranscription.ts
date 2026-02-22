@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import type { TranscriptSegment } from './transcribeAudio';
 
 export const models = [
   'gpt-5.2',
@@ -16,6 +17,8 @@ export interface SummarizationOptions {
   completionModel: Model;
   completionInstructions: string;
   transcript: string;
+  /** Whisper segments with IDs — when present, transcript is sent numbered */
+  segments?: TranscriptSegment[];
 }
 
 export type SummarizationResult =
@@ -25,14 +28,23 @@ export type SummarizationResult =
 
 export default async function summarizeTranscription(
   client: OpenAI,
-  { completionModel, completionInstructions, transcript }: SummarizationOptions,
+  { completionModel, completionInstructions, transcript, segments }: SummarizationOptions,
 ): Promise<SummarizationResult> {
+  // When segments are available, format transcript with [N] prefixes
+  // so the model can reference segment IDs in its summary
+  let userContent: string;
+  if (segments && segments.length > 0) {
+    userContent = segments.map((s) => `[${s.id}] ${s.text}`).join('\n');
+  } else {
+    userContent = transcript;
+  }
+
   try {
     const response = await client.chat.completions.create({
       model: completionModel,
       messages: [
         { role: 'system', content: completionInstructions },
-        { role: 'user', content: transcript },
+        { role: 'user', content: userContent },
       ],
     });
     return processResponse(response);

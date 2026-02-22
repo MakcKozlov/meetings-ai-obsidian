@@ -11,7 +11,10 @@ import {
 import Settings, { type ISettings, DEFAULT_SETTINGS } from './Settings';
 import OpenAI from 'openai';
 import AudioRecorder from './AudioRecorder';
-import transcribeAudio from './transcribeAudio';
+import transcribeAudio, {
+  type TranscriptSegment,
+  type TranscriptionResult,
+} from './transcribeAudio';
 import summarizeTranscription, {
   SummarizationResult,
 } from './summarizeTranscription';
@@ -59,12 +62,12 @@ export default class MeetingAI extends Plugin {
   // ═══════════════════════════════════════════
 
   /** Returns formatted date suffix for file names based on settings.
-   *  Time (HH.mm) is always prepended to ensure unique names.
-   *  Uses dots for time separator (filesystem-safe on all platforms). */
+   *  Time (HH-mm) is always prepended to ensure unique names.
+   *  Uses dashes for time separator (filesystem-safe, looks like time). */
   private formatDateSuffix(date: moment.Moment): string {
     const dateFmt = this.settings.dateFormat || 'DD.MM.YY';
     const datePart = date.format(dateFmt).replace(/:/g, '.');
-    const timePart = date.format('HH.mm');
+    const timePart = date.format('HH-mm');
     return `${timePart} ${datePart}`;
   }
 
@@ -194,11 +197,11 @@ export default class MeetingAI extends Plugin {
     this.audioRecorder.resume();
   }
 
-  async stopMeetingRecording(): Promise<{
-    summary: string;
-    transcript: string;
-    audioFilePath: string | null;
-  } | null> {
+  async stopMeetingRecording(): Promise<
+    | { ok: true; summary: string; transcript: string; segments: TranscriptSegment[]; audioFilePath: string | null }
+    | { ok: false; error: string; audioFilePath: string | null }
+    | null
+  > {
     if (this.audioRecorder.state === 'inactive') return null;
 
     // Stop recording
@@ -206,7 +209,7 @@ export default class MeetingAI extends Plugin {
     const blob = await this.audioRecorder.stop();
     const buffer = await blob.arrayBuffer();
 
-    // Save audio file if configured
+    // Save audio file first — this is local, won't fail from network
     let audioFile: TFile | undefined;
     if (this.settings.saveAudio) {
       audioFile = await this.app.vault.createBinary(
@@ -218,27 +221,77 @@ export default class MeetingAI extends Plugin {
     // Reset recorder
     this.audioRecorder = new AudioRecorder();
 
-    // Transcribe
-    const transcript = await this.transcribeAudio({ buffer, audioFile });
+    // Transcribe + Summarize — may fail from network
+    try {
+      const transcriptionResult = await this.transcribeAudio({ buffer, audioFile });
 
-    // Summarize
-    const summaryResult = await this.summarizeTranscript({
-      transcript,
-      assistantName: this.meetingAssistantName,
-    });
+      const summaryResult = await this.summarizeTranscript({
+        transcript: transcriptionResult.text,
+        segments: transcriptionResult.segments,
+        assistantName: this.meetingAssistantName,
+      });
 
-    const summaryText =
-      summaryResult.state === 'success'
-        ? summaryResult.response
-        : summaryResult.state === 'refused'
-          ? `Summary refused: ${summaryResult.refusal}`
-          : `Summary error: ${summaryResult.error}`;
+      const summaryText =
+        summaryResult.state === 'success'
+          ? summaryResult.response
+          : summaryResult.state === 'refused'
+            ? `Summary refused: ${summaryResult.refusal}`
+            : `Summary error: ${summaryResult.error}`;
 
-    return {
-      summary: summaryText,
-      transcript,
-      audioFilePath: audioFile?.path ?? null,
-    };
+      return {
+        ok: true,
+        summary: summaryText,
+        transcript: transcriptionResult.text,
+        segments: transcriptionResult.segments,
+        audioFilePath: audioFile?.path ?? null,
+      };
+    } catch (e: any) {
+      console.error('Meeting AI: transcription/summarization failed', e);
+      return {
+        ok: false,
+        error: e?.message ?? String(e),
+        audioFilePath: audioFile?.path ?? null,
+      };
+    }
+  }
+
+  /** Retry transcription + summarization from a previously saved audio file */
+  async retryFromAudioFile(audioFilePath: string): Promise<
+    | { ok: true; summary: string; transcript: string; segments: TranscriptSegment[]; audioFilePath: string }
+    | { ok: false; error: string }
+  > {
+    const audioFile = this.app.vault.getAbstractFileByPath(audioFilePath);
+    if (!audioFile || !(audioFile instanceof TFile)) {
+      return { ok: false, error: `Аудио файл не найден: ${audioFilePath}` };
+    }
+
+    try {
+      const transcriptionResult = await this.transcribeAudio({ audioFile: audioFile as TFile });
+
+      const summaryResult = await this.summarizeTranscript({
+        transcript: transcriptionResult.text,
+        segments: transcriptionResult.segments,
+        assistantName: this.meetingAssistantName,
+      });
+
+      const summaryText =
+        summaryResult.state === 'success'
+          ? summaryResult.response
+          : summaryResult.state === 'refused'
+            ? `Summary refused: ${summaryResult.refusal}`
+            : `Summary error: ${summaryResult.error}`;
+
+      return {
+        ok: true,
+        summary: summaryText,
+        transcript: transcriptionResult.text,
+        segments: transcriptionResult.segments,
+        audioFilePath,
+      };
+    } catch (e: any) {
+      console.error('Meeting AI: retry transcription failed', e);
+      return { ok: false, error: e?.message ?? String(e) };
+    }
   }
 
   // ═══════════════════════════════════════════
@@ -553,7 +606,7 @@ export default class MeetingAI extends Plugin {
   }: {
     audioFile?: TFile;
     buffer?: ArrayBuffer;
-  }): Promise<string> {
+  }): Promise<TranscriptionResult> {
     const audioData =
       buffer ?? (audioFile ? await this.app.vault.readBinary(audioFile) : null);
 
@@ -578,9 +631,11 @@ export default class MeetingAI extends Plugin {
 
   async summarizeTranscript({
     transcript,
+    segments,
     assistantName,
   }: {
     transcript: string;
+    segments?: TranscriptSegment[];
     assistantName: string;
   }): Promise<SummarizationResult> {
     const { assistantModel, assistants } = this.settings;
@@ -596,6 +651,7 @@ export default class MeetingAI extends Plugin {
       completionModel: assistantModel,
       completionInstructions: assistant?.prompt,
       transcript,
+      segments,
     });
 
     if (summary.state === 'refused')
@@ -832,9 +888,10 @@ export default class MeetingAI extends Plugin {
 
     this.setNotice('Meeting AI: processing');
     const buffer = await this.app.vault.readBinary(audioFile);
-    const transcript = await this.transcribeAudio({ audioFile, buffer });
+    const transcriptionResult = await this.transcribeAudio({ audioFile, buffer });
     const summary = await this.summarizeTranscript({
-      transcript,
+      transcript: transcriptionResult.text,
+      segments: transcriptionResult.segments,
       assistantName,
     });
     return this.writeResults({
@@ -842,7 +899,7 @@ export default class MeetingAI extends Plugin {
       audioFile,
       date: moment(),
       summary,
-      transcript,
+      transcript: transcriptionResult.text,
     });
   }
 
@@ -854,9 +911,10 @@ export default class MeetingAI extends Plugin {
     this.assertHasOpenAiKey();
 
     const { buffer, audioFile, startedAt } = await this.finishRecording();
-    const transcript = await this.transcribeAudio({ buffer, audioFile });
+    const transcriptionResult = await this.transcribeAudio({ buffer, audioFile });
     const summary = await this.summarizeTranscript({
-      transcript,
+      transcript: transcriptionResult.text,
+      segments: transcriptionResult.segments,
       assistantName,
     });
     return this.writeResults({
@@ -864,7 +922,7 @@ export default class MeetingAI extends Plugin {
       audioFile,
       date: startedAt,
       summary,
-      transcript,
+      transcript: transcriptionResult.text,
     });
   }
 }
