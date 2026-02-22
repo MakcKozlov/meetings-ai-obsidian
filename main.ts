@@ -1,3 +1,3 @@
-import MagicMic from './src/Plugin';
+import MeetingAI from './src/Plugin';
 
-export default MagicMic;
+export default MeetingAI;

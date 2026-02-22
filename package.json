@@ -19,7 +19,7 @@
     "note-taking",
     "productivity"
   ],
-  "author": "Drew McDonald",
+  "author": "Maks Kozlov",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^16.11.6",

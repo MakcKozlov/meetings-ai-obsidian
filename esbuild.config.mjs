@@ -24,7 +24,7 @@ const copy_to_plugins = {
       const dir = process.env.OBSIDIAN_PLUGINS_PATH;
       if (!dir) throw new Error('Unable to find OBSIDIAN_PLUGINS_PATH in env');
 
-      const plugin_path = path.join(dir, 'magic-mic');
+      const plugin_path = path.join(dir, 'meeting-ai');
 
       if (!fs.existsSync(plugin_path)) {
         fs.mkdirSync(plugin_path);
