@@ -317,7 +317,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
       content = MeetingWidget.replaceBlock(content, MeetingWidget.ERROR_START, MeetingWidget.ERROR_END, errorData);
       await this.plugin.app.vault.modify(file, content);
     } catch (e) {
-      console.warn('Meeting AI: failed to save error state', e);
+      console.warn('Meetings Ai: failed to save error state', e);
     }
   }
 
@@ -337,7 +337,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
         await this.plugin.app.vault.modify(file, before + after);
       }
     } catch (e) {
-      console.warn('Meeting AI: failed to clear error state', e);
+      console.warn('Meetings Ai: failed to clear error state', e);
     }
   }
 
@@ -381,7 +381,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
     try {
       await this.saveResultsToFile();
     } catch (e) {
-      console.error('Meeting AI: failed to save results to file', e);
+      console.error('Meetings Ai: failed to save results to file', e);
     }
   }
 
@@ -936,7 +936,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
       this.startTimerInterval();
     } catch (e: any) {
       console.error('Failed to start recording:', e);
-      new Notice(`Meeting AI: ${e?.message ?? e}`);
+      new Notice(`Meetings Ai: ${e?.message ?? e}`);
       if (this.results.length > 0) {
         const last = this.results[this.results.length - 1];
         this.state = {
@@ -990,7 +990,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
         );
       } else {
         // Transcription/summarization failed but audio is saved
-        new Notice(`Meeting AI: ${result.error}`);
+        new Notice(`Meetings Ai: ${result.error}`);
         this.setState({
           status: 'error',
           message: result.error,
@@ -999,7 +999,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
       }
     } catch (e: any) {
       console.error('Failed to stop recording:', e);
-      new Notice(`Meeting AI: ${e?.message ?? e}`);
+      new Notice(`Meetings Ai: ${e?.message ?? e}`);
       this.setState({
         status: 'error',
         message: e?.message ?? String(e),
@@ -1022,7 +1022,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
           result.audioFilePath,
         );
       } else {
-        new Notice(`Meeting AI: ${result.error}`);
+        new Notice(`Meetings Ai: ${result.error}`);
         this.setState({
           status: 'error',
           message: result.error,
@@ -1030,8 +1030,8 @@ export default class MeetingWidget extends MarkdownRenderChild {
         });
       }
     } catch (e: any) {
-      console.error('Meeting AI: retry failed', e);
-      new Notice(`Meeting AI: ${e?.message ?? e}`);
+      console.error('Meetings Ai: retry failed', e);
+      new Notice(`Meetings Ai: ${e?.message ?? e}`);
       this.setState({
         status: 'error',
         message: e?.message ?? String(e),

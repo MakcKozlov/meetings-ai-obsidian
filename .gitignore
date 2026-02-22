@@ -18,3 +18,4 @@ data.json
 
 # Environment
 .env
+.claude/

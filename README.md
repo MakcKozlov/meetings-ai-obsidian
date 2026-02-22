@@ -1,4 +1,4 @@
-# Meeting AI
+# Meetings Ai for Obsidian
 
 Obsidian plugin that records, transcribes, and summarizes meetings directly inside your vault. One click to start recording, one click to get a structured summary with action items.
 
@@ -31,7 +31,7 @@ Everything stays in your vault: the audio file, transcript, and summary are save
 ## Setup
 
 1. Install the plugin
-2. Go to Settings > Meeting AI
+2. Go to Settings > Meetings Ai
 3. Add your [OpenAI API key](https://platform.openai.com/api-keys)
 4. (Optional) Configure output folder, audio folder, summary prompt, and assistants
 

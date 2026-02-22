@@ -1,4 +1,4 @@
-name: Release Meeting AI
+name: Release Meetings Ai
 
 on:
   push:

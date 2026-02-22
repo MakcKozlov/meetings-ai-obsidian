@@ -2,7 +2,7 @@
 
 ## [2.0.0] — 2026-02-22
 
-First major release as **Meeting AI**. Complete redesign from the original Magic Mic fork.
+First major release as **Meetings Ai**. Complete redesign from the original Magic Mic fork.
 
 ### Added
 - Interactive meeting widget with tabs: Summary, Notes, Transcript, Audio
@@ -24,7 +24,7 @@ First major release as **Meeting AI**. Complete redesign from the original Magic
 - Time format in filenames now uses dashes (`HH-mm`), filesystem-safe
 
 ### Changed
-- Rebranded from Magic Mic to Meeting AI
+- Rebranded from Magic Mic to Meetings Ai
 - Audio is saved locally before any API calls — never lost on network failure
 - Widget state persisted in markdown files as hidden HTML comments
 

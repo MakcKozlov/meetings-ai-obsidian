@@ -238,7 +238,7 @@ export default class Settings extends PluginSettingTab {
       .setDesc(
         'Summary assistants turn your transcribed memos into useful notes. ' +
           'Provide a name and a prompt for each. Add multiple assistants for ' +
-          'different purposes, and choose between them when you run Meeting AI.',
+          'different purposes, and choose between them when you run Meetings Ai.',
       );
 
     for (const [

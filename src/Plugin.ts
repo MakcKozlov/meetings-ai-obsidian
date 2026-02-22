@@ -79,7 +79,7 @@ export default class MeetingAI extends Plugin {
     this.registerMarkdownCodeBlockProcessor(
       'meeting-ai',
       (source, el, ctx) => {
-        console.log('Meeting AI: code block processor called');
+        console.log('Meetings Ai: code block processor called');
         const widget = new MeetingWidget(el, this, ctx);
         ctx.addChild(widget);
         this.activeWidget = widget;
@@ -246,7 +246,7 @@ export default class MeetingAI extends Plugin {
         audioFilePath: audioFile?.path ?? null,
       };
     } catch (e: any) {
-      console.error('Meeting AI: transcription/summarization failed', e);
+      console.error('Meetings Ai: transcription/summarization failed', e);
       return {
         ok: false,
         error: e?.message ?? String(e),
@@ -289,7 +289,7 @@ export default class MeetingAI extends Plugin {
         audioFilePath,
       };
     } catch (e: any) {
-      console.error('Meeting AI: retry transcription failed', e);
+      console.error('Meetings Ai: retry transcription failed', e);
       return { ok: false, error: e?.message ?? String(e) };
     }
   }
@@ -303,7 +303,7 @@ export default class MeetingAI extends Plugin {
   }
 
   missingOpenAiKeyMsg =
-    'Meeting AI: cannot transcribe or summarize without an OpenAI API key; ' +
+    'Meetings Ai: cannot transcribe or summarize without an OpenAI API key; ' +
     'please add one in the plugin settings.';
 
   assertHasOpenAiKey() {
@@ -334,7 +334,7 @@ export default class MeetingAI extends Plugin {
   // ═══════════════════════════════════════════
 
   addRibbonIconMenu() {
-    this.addRibbonIcon('microphone', 'Meeting AI', (event) => {
+    this.addRibbonIcon('microphone', 'Meetings Ai', (event) => {
       // If a meeting recording is active, show pause/stop menu
       if (this.audioRecorder.state !== 'inactive') {
         const menu =
@@ -347,8 +347,8 @@ export default class MeetingAI extends Plugin {
 
       // Otherwise create a new meeting note
       this.createMeetingNote().catch((err) => {
-        console.error('Meeting AI: failed to create meeting note', err);
-        new Notice(`Meeting AI: ${err}`);
+        console.error('Meetings Ai: failed to create meeting note', err);
+        new Notice(`Meetings Ai: ${err}`);
       });
     });
   }
@@ -364,8 +364,8 @@ export default class MeetingAI extends Plugin {
       icon: 'microphone',
       callback: () => {
         this.createMeetingNote().catch((err) => {
-          console.error('Meeting AI: failed to create meeting note', err);
-          new Notice(`Meeting AI: ${err}`);
+          console.error('Meetings Ai: failed to create meeting note', err);
+          new Notice(`Meetings Ai: ${err}`);
         });
       },
     });
@@ -546,17 +546,17 @@ export default class MeetingAI extends Plugin {
 
   startRecording() {
     this.audioRecorder.start();
-    this.setNotice('Meeting AI: recording');
+    this.setNotice('Meetings Ai: recording');
   }
 
   pauseRecording() {
     this.audioRecorder.pause();
-    this.notice?.setMessage('Meeting AI: paused');
+    this.notice?.setMessage('Meetings Ai: paused');
   }
 
   resumeRecording() {
     this.audioRecorder.resume();
-    this.notice?.setMessage('Meeting AI: recording');
+    this.notice?.setMessage('Meetings Ai: recording');
   }
 
   async cancelRecording() {
@@ -622,7 +622,7 @@ export default class MeetingAI extends Plugin {
       prompt: this.settings.transcriptionHint,
       audioFiles,
       onChunkStart: (i, total) => {
-        let message = 'Meeting AI: transcribing';
+        let message = 'Meetings Ai: transcribing';
         if (total > 1) message += ` ${i + 1}/${total}`;
         this.setNotice(message);
       },
@@ -646,7 +646,7 @@ export default class MeetingAI extends Plugin {
           `${assistants.map((a) => a.name).join(', ')}`,
       );
 
-    this.setNotice(`Meeting AI: summarizing`);
+    this.setNotice(`Meetings Ai: summarizing`);
     const summary = await summarizeTranscription(this.client, {
       completionModel: assistantModel,
       completionInstructions: assistant?.prompt,
@@ -735,7 +735,7 @@ export default class MeetingAI extends Plugin {
       try {
         await this.app.fileManager.renameFile(file, newPath);
       } catch (err) {
-        console.warn(`Meeting AI: failed to archive ${file.path}`, err);
+        console.warn(`Meetings Ai: failed to archive ${file.path}`, err);
       }
     }
 
@@ -781,7 +781,7 @@ export default class MeetingAI extends Plugin {
       try {
         await this.app.fileManager.renameFile(file, newPath);
       } catch (err) {
-        console.warn(`Meeting AI: failed to archive audio ${file.path}`, err);
+        console.warn(`Meetings Ai: failed to archive audio ${file.path}`, err);
       }
     }
   }
@@ -867,7 +867,7 @@ export default class MeetingAI extends Plugin {
 
     const note = await this.app.vault.create(notePath, noteContent);
     await this.app.fileManager.processFrontMatter(note, (frontMatter) => {
-      frontMatter.createdBy = 'Meeting AI';
+      frontMatter.createdBy = 'Meetings Ai';
       frontMatter.assistant = assistantName;
       frontMatter.recordedAt = date.local().format('YYYY-MM-DD HH:mm:ss');
       frontMatter.transcript = transcript;
@@ -886,7 +886,7 @@ export default class MeetingAI extends Plugin {
   }): Promise<TFile> {
     this.assertHasOpenAiKey();
 
-    this.setNotice('Meeting AI: processing');
+    this.setNotice('Meetings Ai: processing');
     const buffer = await this.app.vault.readBinary(audioFile);
     const transcriptionResult = await this.transcribeAudio({ audioFile, buffer });
     const summary = await this.summarizeTranscript({
