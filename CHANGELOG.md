@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.0] — 2025-02-22
+## [2.0.0] — 2026-02-22
 
 First major release as **Meeting AI**. Complete redesign from the original Magic Mic fork.
 
@@ -30,4 +30,4 @@ First major release as **Meeting AI**. Complete redesign from the original Magic
 
 ## [1.0.5] and earlier
 
-Original Magic Mic plugin by Drew McDonald. Basic recording, transcription, and summarization.
+Original [Magic Mic](https://github.com/drewmcdonald/obsidian-magic-mic) plugin by [Drew McDonald](https://github.com/drewmcdonald). Basic recording, transcription, and summarization via OpenAI Whisper + GPT.
