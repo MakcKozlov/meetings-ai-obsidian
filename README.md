@@ -49,6 +49,10 @@ Everything stays in your vault: the audio file, transcript, and summary are save
 | Summary model | OpenAI model for summarization | `gpt-4o` |
 | Assistants | Custom prompt profiles for different meeting types | 1 default |
 
+## Credits
+
+This project is a fork of [Magic Mic](https://github.com/drewmcdonald/obsidian-magic-mic) by [Drew McDonald](https://github.com/drewmcdonald), which provided the original recording and transcription foundation.
+
 ## License
 
 MIT
