@@ -1,6 +1,6 @@
 {
-	"id": "magic-mic",
-	"name": "Magic Mic",
+	"id": "meeting-ai",
+	"name": "Meeting AI",
 	"version": "1.0.5",
 	"minAppVersion": "0.15.0",
 	"description": "Record, transcribe, and summarize audio directly into your vault with custom assistants.",

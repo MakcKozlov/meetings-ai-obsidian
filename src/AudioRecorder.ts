@@ -16,7 +16,7 @@ export interface RecorderOptions {
 export default class AudioRecorder {
   /** The time at which recording originally began */
   startedAt: moment.Moment | null = null;
-  timer: Timer;
+  timer: Timer = new Timer();
 
   private mimeType: SupportedMimeType;
   private bitRate: number;
@@ -60,19 +60,18 @@ export default class AudioRecorder {
     return rec;
   }
 
-  start() {
+  async start(): Promise<void> {
     if (this.startedAt === null) {
       this.startedAt = moment().local();
     }
-    navigator.mediaDevices
-      .getUserMedia({ audio: true })
-      .then((stream) => {
-        this.mediaRecorder = this.setupMediaRecorder(stream);
-        this.mediaRecorder.start();
-      })
-      .catch((err) => {
-        console.error('Error accessing microphone:', err);
-      });
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.mediaRecorder = this.setupMediaRecorder(stream);
+      this.mediaRecorder.start();
+    } catch (err) {
+      console.error('Error accessing microphone:', err);
+      throw err;
+    }
   }
 
   pause() {
@@ -92,9 +91,14 @@ export default class AudioRecorder {
   }
 
   stop() {
-    return new Promise<Blob>((resolve) => {
+    return new Promise<Blob>((resolve, reject) => {
       if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') {
         throw new Error('Cannot stop: not currently recording');
+      }
+
+      // Request final data chunk before stopping (helps on iOS)
+      if (this.mediaRecorder.state === 'recording') {
+        this.mediaRecorder.requestData();
       }
 
       this.mediaRecorder.onstop = () => {
@@ -108,6 +112,11 @@ export default class AudioRecorder {
 
         this.data = []; // reset the data
         this.mediaRecorder = null; // reset the recorder
+
+        if (blob.size === 0) {
+          reject(new Error('Recording produced empty audio data. Please try again.'));
+          return;
+        }
 
         resolve(blob);
       };

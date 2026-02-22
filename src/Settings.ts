@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from 'obsidian';
 
-import MagicMicPlugin from './Plugin';
+import MeetingAIPlugin from './Plugin';
 import { Model, models } from './summarizeTranscription';
 
 export interface ISettings {
@@ -10,15 +10,17 @@ export interface ISettings {
   assistants: { name: string; prompt: string }[];
   saveAudio: boolean;
   linkAudio: boolean;
+  outputFolder: string;
+  audioFolder: string;
+  dateFormat: string;
 }
 
-const defaultInstructions = `You are an AI specializing in summarizing
-transcribed voice notes. Below is a transcript of a spoken recording. Please
-generate concise notes in markdown format, prioritizing clarity and coherence.
-Reorganize content into appropriate sections with headers. Do not infer any
-additional context or information beyond the transcription. Keep the content
-structured and readable in markdown format, but without using code blocks.
-Below is the transcribed audio:`
+const defaultInstructions = `You are a concise note-taking assistant.
+Summarize the following voice note transcript into clear, actionable bullet
+points. Use markdown formatting. Keep it brief — capture only key ideas,
+decisions, and action items. Do not add sections like "Interactions" or
+"Clarification". Do not infer anything beyond what was said. Write in the
+same language as the transcript. Below is the transcript:`
   .replace(/\n/g, ' ')
   .trim();
 
@@ -29,12 +31,15 @@ export const DEFAULT_SETTINGS: ISettings = {
   assistants: [{ name: 'Default', prompt: defaultInstructions }],
   saveAudio: true,
   linkAudio: true,
+  outputFolder: 'Records',
+  audioFolder: 'Records/Audio',
+  dateFormat: 'DD.MM.YY',
 };
 
 export default class Settings extends PluginSettingTab {
-  plugin: MagicMicPlugin;
+  plugin: MeetingAIPlugin;
 
-  constructor(app: App, plugin: MagicMicPlugin) {
+  constructor(app: App, plugin: MeetingAIPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
@@ -45,10 +50,100 @@ export default class Settings extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl)
+      .setName('Notes folder')
+      .setDesc(
+        'Folder where meeting notes are saved. ' +
+          'Leave empty to use the vault default location.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('e.g. Records')
+          .setValue(this.plugin.settings.outputFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.outputFolder = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Audio folder')
+      .setDesc(
+        'Folder where audio recordings are saved. ' +
+          'Leave empty to use the vault default location.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('e.g. Records/Audio')
+          .setValue(this.plugin.settings.audioFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.audioFolder = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    const buildPreview = (fmt: string) => {
+      const datePart = window.moment().format(fmt || 'DD.MM.YY').replace(/:/g, '.');
+      const timePart = window.moment().format('HH.mm');
+      return `Meeting @ ${timePart} ${datePart}`;
+    };
+
+    const dateFormatSetting = new Setting(containerEl)
+      .setName('Date format')
+      .setDesc(
+        'Date part of file names (moment.js tokens). ' +
+          'Time (HH.mm) is always added automatically.',
+      )
+      .addText((text) => {
+        text
+          .setPlaceholder('DD.MM.YY')
+          .setValue(this.plugin.settings.dateFormat)
+          .onChange(async (value) => {
+            this.plugin.settings.dateFormat = value.trim();
+            const preview = dateFormatSetting.descEl.querySelector(
+              '.mm-date-preview',
+            );
+            if (preview) {
+              preview.textContent = buildPreview(value.trim());
+            }
+            await this.plugin.saveSettings();
+          });
+        return text;
+      });
+
+    // Preset buttons
+    const presets: { label: string; format: string }[] = [
+      { label: 'DD.MM.YY', format: 'DD.MM.YY' },
+      { label: 'DD.MM.YYYY', format: 'DD.MM.YYYY' },
+      { label: 'YYYY-MM-DD', format: 'YYYY-MM-DD' },
+      { label: 'DD MMM YYYY', format: 'DD MMM YYYY' },
+      { label: 'MMM DD, YYYY', format: 'MMM DD, YYYY' },
+    ];
+
+    const presetsRow = dateFormatSetting.descEl.createDiv({
+      cls: 'mm-presets-row',
+    });
+    for (const preset of presets) {
+      const btn = presetsRow.createEl('button', {
+        text: preset.label,
+        cls: 'mm-preset-btn',
+      });
+      btn.addEventListener('click', async () => {
+        this.plugin.settings.dateFormat = preset.format;
+        await this.plugin.saveSettings();
+        this.display();
+      });
+    }
+
+    // Live preview
+    dateFormatSetting.descEl.createDiv({
+      cls: 'mm-date-preview',
+      text: buildPreview(this.plugin.settings.dateFormat),
+    });
+
+    new Setting(containerEl)
       .setName('Save audio')
       .setDesc(
-        'Save audio files in your vault after transcription; files will ' +
-          'be saved according to your vault settings for new attachments.',
+        'Save audio files in your vault after transcription.',
       )
       .addToggle((toggle) => {
         toggle
@@ -62,7 +157,7 @@ export default class Settings extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Link audio')
       .setDesc(
-        'Link audio files into the summary note; ignored if not retaining audio',
+        'Add a link to the audio file in the meeting note.',
       )
       .addToggle((toggle) => {
         toggle
@@ -126,7 +221,7 @@ export default class Settings extends PluginSettingTab {
       .setDesc(
         'Summary assistants turn your transcribed memos into useful notes. ' +
           'Provide a name and a prompt for each. Add multiple assistants for ' +
-          'different purposes, and choose between them when you run Magic Mic.',
+          'different purposes, and choose between them when you run Meeting AI.',
       );
 
     for (const [

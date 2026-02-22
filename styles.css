@@ -1,8 +1,495 @@
-/*
+/* ═══════════════════════════════════════════
+   Meeting AI — Meeting Widget Styles
+   ═══════════════════════════════════════════ */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* Hide the "edit code block" pencil button on our widget */
+.meeting-ai-block .edit-block-button,
+.meeting-ai-block .code-block-flair,
+div:has(> .meeting-ai-block) .edit-block-button,
+div:has(> .meeting-ai-block) .code-block-flair {
+  display: none !important;
+}
 
-If your plugin does not need CSS, delete this file.
+/* Remove code-block styling (background, padding, border) from parent */
+.meeting-ai-block {
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+}
 
-*/
+/* Also target Obsidian's code block wrapper */
+div:has(> .meeting-ai-block),
+pre:has(> .meeting-ai-block) {
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+}
+
+.meeting-ai-widget {
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin: 0;
+  background: var(--background-secondary);
+  border: none;
+  transition: all 0.2s ease;
+}
+
+/* ─── Idle State ─── */
+
+.mm-idle-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.mm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--interactive-normal);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.mm-btn:hover {
+  background: var(--interactive-hover);
+}
+
+.mm-btn-start {
+  padding: 10px 24px;
+  font-size: 15px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.mm-btn-start:hover {
+  background: var(--interactive-accent-hover);
+  border-color: var(--interactive-accent-hover);
+}
+
+.mm-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.mm-btn-label {
+  line-height: 1;
+}
+
+/* Assistant selector */
+
+.mm-assistant-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.mm-assistant-label {
+  font-weight: 500;
+}
+
+.mm-assistant-select {
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+/* ─── Recording / Paused containers ─── */
+
+.mm-recording-container,
+.mm-paused-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mm-top-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Recording indicator dot + label */
+
+.mm-rec-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mm-rec-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e74c3c;
+  animation: mm-pulse 1.2s ease-in-out infinite;
+}
+
+.mm-rec-dot.mm-paused {
+  background: var(--text-muted);
+  animation: none;
+}
+
+@keyframes mm-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.mm-rec-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+/* Waveform bars */
+
+.mm-waveform {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  height: 30px;
+  justify-content: center;
+}
+
+.mm-waveform-bar {
+  width: 3px;
+  min-height: 4px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  animation: mm-wave 0.8s ease-in-out infinite alternate;
+}
+
+.mm-waveform-bar:nth-child(1)  { animation-delay: 0.0s; }
+.mm-waveform-bar:nth-child(2)  { animation-delay: 0.1s; }
+.mm-waveform-bar:nth-child(3)  { animation-delay: 0.2s; }
+.mm-waveform-bar:nth-child(4)  { animation-delay: 0.05s; }
+.mm-waveform-bar:nth-child(5)  { animation-delay: 0.15s; }
+.mm-waveform-bar:nth-child(6)  { animation-delay: 0.25s; }
+.mm-waveform-bar:nth-child(7)  { animation-delay: 0.08s; }
+.mm-waveform-bar:nth-child(8)  { animation-delay: 0.18s; }
+.mm-waveform-bar:nth-child(9)  { animation-delay: 0.12s; }
+.mm-waveform-bar:nth-child(10) { animation-delay: 0.22s; }
+.mm-waveform-bar:nth-child(11) { animation-delay: 0.03s; }
+.mm-waveform-bar:nth-child(12) { animation-delay: 0.13s; }
+
+@keyframes mm-wave {
+  0%   { height: 4px; }
+  100% { height: 24px; }
+}
+
+/* Frozen waveform (paused) */
+
+.mm-waveform.mm-frozen .mm-waveform-bar {
+  animation: none;
+  height: 8px;
+  opacity: 0.4;
+}
+
+/* Elapsed timer */
+
+.mm-elapsed {
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-normal);
+  flex-shrink: 0;
+  min-width: 50px;
+  text-align: right;
+}
+
+/* Button row */
+
+.mm-btn-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.mm-btn-pause {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.mm-btn-pause:hover {
+  background: var(--background-modifier-border);
+}
+
+.mm-btn-stop {
+  background: #e74c3c;
+  color: #fff;
+  border-color: #e74c3c;
+}
+
+.mm-btn-stop:hover {
+  background: #c0392b;
+  border-color: #c0392b;
+}
+
+.mm-btn-resume {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.mm-btn-resume:hover {
+  background: var(--interactive-accent-hover);
+  border-color: var(--interactive-accent-hover);
+}
+
+/* ─── Processing State ─── */
+
+.mm-processing-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+
+.mm-spinner-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mm-spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--background-modifier-border);
+  border-top-color: var(--interactive-accent);
+  border-radius: 50%;
+  animation: mm-spin 0.8s linear infinite;
+}
+
+@keyframes mm-spin {
+  to { transform: rotate(360deg); }
+}
+
+.mm-processing-text {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* ─── Done State — Tabs ─── */
+
+.mm-done-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.mm-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 0;
+}
+
+.mm-tab {
+  padding: 6px 14px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s ease, border-color 0.15s ease;
+  border-radius: 0;
+}
+
+.mm-tab:hover {
+  color: var(--text-normal);
+  background: none;
+}
+
+.mm-tab-active {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+}
+
+.mm-tab-content {
+  /* No min-height — let content define the size */
+}
+
+.mm-tab-panel {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-normal);
+  /* No max-height, no scroll — show all content */
+  padding: 8px 0 0;
+}
+
+/* Notion-style tight spacing for text content */
+.mm-tab-panel h1,
+.mm-tab-panel h2,
+.mm-tab-panel h3 {
+  margin: 12px 0 2px;
+  line-height: 1.3;
+}
+
+.mm-tab-panel h1:first-child,
+.mm-tab-panel h2:first-child,
+.mm-tab-panel h3:first-child {
+  margin-top: 0;
+}
+
+.mm-tab-panel h1 { font-size: 17px; }
+.mm-tab-panel h2 { font-size: 15px; }
+.mm-tab-panel h3 { font-size: 14px; }
+
+.mm-tab-panel ul {
+  margin: 2px 0;
+  padding-left: 20px;
+}
+
+.mm-tab-panel li {
+  margin: 1px 0;
+}
+
+.mm-tab-panel p {
+  margin: 2px 0;
+}
+
+.mm-tab-panel br {
+  display: block;
+  content: "";
+  margin: 1px 0;
+}
+
+.mm-summary-panel {
+  padding: 8px 0 0;
+}
+
+.mm-transcript-panel {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.mm-notes-hint {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.mm-notes-textarea {
+  width: 100%;
+  min-height: 120px;
+  max-height: 400px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 14px;
+  line-height: 1.5;
+  font-family: var(--font-text);
+  resize: vertical;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.mm-notes-textarea:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.mm-notes-textarea::placeholder {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ─── Audio Tab ─── */
+
+.mm-audio-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 0 0;
+}
+
+.mm-audio-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mm-audio-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.mm-audio-player {
+  width: 100%;
+  height: 40px;
+  border-radius: 8px;
+  outline: none;
+}
+
+.mm-audio-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 13px;
+}
+
+.mm-btn-record-again {
+  align-self: center;
+  margin-top: 12px;
+  font-size: 13px;
+  padding: 6px 16px;
+}
+
+/* ─── Settings page — date format presets ─── */
+
+.mm-presets-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mm-preset-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.mm-preset-btn:hover {
+  background: var(--interactive-hover);
+  color: var(--text-normal);
+}
+
+.mm-date-preview {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-accent);
+}
