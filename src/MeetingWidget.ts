@@ -455,21 +455,37 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private renderIdle() {
     const container = this.wrapperEl.createDiv({ cls: 'mm-idle-container' });
 
-    // If we have previous results, show them with tabs above the start button
+    // If we have previous results, show them with tabs above
     if (this.results.length > 0) {
       this.renderTabs(container);
     }
 
-    // Start button
-    const startBtn = container.createEl('button', {
+    // Top row: notes input + start button
+    const topRow = container.createDiv({ cls: 'mm-idle-top-row' });
+
+    const textarea = topRow.createEl('textarea', {
+      cls: 'mm-inline-notes',
+      attr: {
+        placeholder: 'Write your notes here...',
+        rows: '2',
+      },
+    });
+    textarea.value = this.notesContent;
+    textarea.addEventListener('input', () => {
+      this.notesContent = textarea.value;
+      this.saveNotesDebounced();
+      // Auto-grow
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    });
+
+    const startBtn = topRow.createEl('button', {
       cls: 'mm-btn mm-btn-start',
     });
     const micIcon = startBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
     micIcon.innerHTML = this.micSvg();
     startBtn.createSpan({
-      text: this.results.length > 0
-        ? 'Record again'
-        : 'Start transcribing',
+      text: this.results.length > 0 ? 'Record' : 'Start',
       cls: 'mm-btn-label',
     });
     startBtn.addEventListener('click', () => this.onStartClick());
@@ -541,6 +557,9 @@ export default class MeetingWidget extends MarkdownRenderChild {
       this.stopSvg();
     stopBtn.createSpan({ text: 'Stop', cls: 'mm-btn-label' });
     stopBtn.addEventListener('click', () => this.onStopClick());
+
+    // Notes area during recording
+    this.renderInlineNotes(container);
   }
 
   // ─── Paused state ───
@@ -584,6 +603,29 @@ export default class MeetingWidget extends MarkdownRenderChild {
       this.stopSvg();
     stopBtn.createSpan({ text: 'Stop', cls: 'mm-btn-label' });
     stopBtn.addEventListener('click', () => this.onStopClick());
+
+    // Notes area during paused
+    this.renderInlineNotes(container);
+  }
+
+  // ─── Inline notes (shared by idle-row, recording, paused) ───
+
+  private renderInlineNotes(container: HTMLElement) {
+    const textarea = container.createEl('textarea', {
+      cls: 'mm-inline-notes',
+      attr: {
+        placeholder: 'Write your notes here...',
+        rows: '3',
+      },
+    });
+    textarea.value = this.notesContent;
+    textarea.addEventListener('input', () => {
+      this.notesContent = textarea.value;
+      this.saveNotesDebounced();
+      // Auto-grow
+      textarea.style.height = 'auto';
+      textarea.style.height = textarea.scrollHeight + 'px';
+    });
   }
 
   // ─── Processing state ───
@@ -710,10 +752,13 @@ export default class MeetingWidget extends MarkdownRenderChild {
     switch (this.activeTab) {
       case 'summary': {
         const summaryPanel = tabContent.createDiv({ cls: 'mm-tab-panel mm-summary-panel' });
-        summaryPanel.innerHTML = this.markdownToHtml(allSummaries);
+
+        // Rendered preview
+        const previewDiv = summaryPanel.createDiv({ cls: 'mm-summary-preview' });
+        previewDiv.innerHTML = this.markdownToHtml(allSummaries);
 
         // Footnote click handler — switch to transcript and scroll
-        summaryPanel.addEventListener('click', (e) => {
+        previewDiv.addEventListener('click', (e) => {
           const badge = (e.target as HTMLElement).closest('.mm-footnote-badge');
           if (!badge) return;
           const segId = badge.getAttribute('data-segment-id');
@@ -721,6 +766,40 @@ export default class MeetingWidget extends MarkdownRenderChild {
           this.activeTab = 'transcript';
           this.pendingScrollToSegment = parseInt(segId, 10);
           this.render();
+        });
+
+        // Edit button
+        const editBtn = summaryPanel.createEl('button', {
+          cls: 'mm-btn mm-btn-edit-summary',
+        });
+        const editIcon = editBtn.createSpan({ cls: 'mm-icon' });
+        editIcon.innerHTML = this.editSvg();
+        editBtn.createSpan({ text: 'Edit summary', cls: 'mm-btn-label' });
+        editBtn.addEventListener('click', () => {
+          // Toggle: replace preview with textarea
+          previewDiv.style.display = 'none';
+          editBtn.style.display = 'none';
+          const editArea = summaryPanel.createEl('textarea', {
+            cls: 'mm-summary-textarea',
+            attr: { rows: '12' },
+          });
+          editArea.value = allSummaries;
+
+          const saveBtn = summaryPanel.createEl('button', {
+            cls: 'mm-btn mm-btn-save-summary',
+          });
+          saveBtn.createSpan({ text: 'Save', cls: 'mm-btn-label' });
+          saveBtn.addEventListener('click', async () => {
+            // Update the last result's summary with edited text
+            if (this.results.length > 0) {
+              this.results[this.results.length - 1].summary = editArea.value;
+              MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
+              await this.saveResultsToFile();
+            }
+            this.render();
+          });
+
+          editArea.focus();
         });
         break;
       }
@@ -1079,6 +1158,10 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private audioSvg(): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>`;
+  }
+
+  private editSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`;
   }
 
   private settingsSvg(): string {
