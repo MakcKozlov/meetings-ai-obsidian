@@ -22,6 +22,7 @@ import { must } from './utils/must';
 import { isAudioFile } from './utils/isAudioFile';
 import audioDataToChunkedFiles from './utils/audioDataToChunkedFiles';
 import MeetingWidget from './MeetingWidget';
+import MeetingsIndexWidget from './MeetingsIndexWidget';
 
 export default class MeetingAI extends Plugin {
   settings: ISettings;
@@ -83,6 +84,14 @@ export default class MeetingAI extends Plugin {
         const widget = new MeetingWidget(el, this, ctx);
         ctx.addChild(widget);
         this.activeWidget = widget;
+      },
+    );
+
+    this.registerMarkdownCodeBlockProcessor(
+      'meetings-index',
+      (source, el, ctx) => {
+        const widget = new MeetingsIndexWidget(el, this);
+        ctx.addChild(widget);
       },
     );
   }
@@ -149,6 +158,10 @@ export default class MeetingAI extends Plugin {
     this.ensureNewestFirstSort();
 
     this.meetingNoteFile = note;
+
+    // Update the meetings index file
+    await this.updateMeetingsIndex();
+
     return note;
   }
 
@@ -345,9 +358,9 @@ export default class MeetingAI extends Plugin {
         return;
       }
 
-      // Otherwise create a new meeting note
-      this.createMeetingNote().catch((err) => {
-        console.error('Meetings Ai: failed to create meeting note', err);
+      // Open the meetings index page
+      this.openMeetingsIndex().catch((err) => {
+        console.error('Meetings Ai: failed to open meetings index', err);
         new Notice(`Meetings Ai: ${err}`);
       });
     });
@@ -783,6 +796,64 @@ export default class MeetingAI extends Plugin {
       } catch (err) {
         console.warn(`Meetings Ai: failed to archive audio ${file.path}`, err);
       }
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  //  Meetings Index — auto-generated Meetings.md
+  // ═══════════════════════════════════════════
+
+  /**
+   * Ensures the Meetings.md index file exists in the output folder.
+   * The file contains a `meetings-index` code block that renders
+   * an interactive widget (meetings are scanned live by the widget).
+   */
+  async updateMeetingsIndex(): Promise<void> {
+    const outputFolder = this.settings.outputFolder;
+    if (!outputFolder) return;
+
+    const INDEX_NAME = 'Meetings.md';
+    const indexPath = normalizePath(`${outputFolder}/${INDEX_NAME}`);
+    const existing = this.app.vault.getAbstractFileByPath(indexPath);
+
+    // Only create the file if it doesn't exist yet — the widget renders dynamically
+    if (!existing) {
+      await this.ensureFolderExists(outputFolder);
+      const content = '```meetings-index\n```\n';
+      await this.app.vault.create(indexPath, content);
+    }
+  }
+
+  /**
+   * Opens the Meetings.md index page (creates it if needed).
+   * Switches to Reading mode so the widget renders.
+   */
+  async openMeetingsIndex(): Promise<void> {
+    const outputFolder = this.settings.outputFolder;
+    if (!outputFolder) {
+      new Notice('Meetings Ai: please set an output folder in settings');
+      return;
+    }
+
+    // Ensure the index file exists
+    await this.updateMeetingsIndex();
+
+    const INDEX_NAME = 'Meetings.md';
+    const indexPath = normalizePath(`${outputFolder}/${INDEX_NAME}`);
+
+    // Open the file
+    const currentPath = this.app.workspace.getActiveFile()?.path ?? '';
+    await this.app.workspace.openLinkText(indexPath, currentPath, false);
+
+    // Switch to Reading mode so the code block widget renders
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (view) {
+      await new Promise((r) => setTimeout(r, 100));
+      // @ts-ignore — setState is available but not fully typed
+      await view.setState(
+        { ...view.getState(), mode: 'preview' },
+        { history: false },
+      );
     }
   }
 

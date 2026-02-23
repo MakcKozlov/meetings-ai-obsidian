@@ -691,3 +691,235 @@ pre:has(> .meeting-ai-block) {
 .mm-task-text {
   flex: 1;
 }
+
+/* ═══════════════════════════════════════════
+   Meetings Index Widget
+   ═══════════════════════════════════════════ */
+
+/* Hide code block controls */
+div:has(> .mi-index) .edit-block-button,
+div:has(> .mi-index) .code-block-flair {
+  display: none !important;
+}
+
+/* Remove code-block styling from wrapper */
+div:has(> .mi-index),
+pre:has(> .mi-index) {
+  background: none !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+}
+
+.mi-index {
+  padding: 4px 0 16px;
+  font-family: var(--font-interface);
+  background: none !important;
+  border: none !important;
+}
+
+/* ── Header ── */
+
+.mi-header {
+  padding: 0 0 16px;
+}
+
+.mi-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mi-title-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mi-title-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+
+.mi-title-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+/* ── New meeting button ── */
+
+.mi-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.mi-new-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.mi-new-btn:active {
+  transform: scale(0.97);
+}
+
+.mi-new-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+.mi-new-label {
+  line-height: 1;
+}
+
+/* ── Sections (collapsible groups) ── */
+
+.mi-section {
+  margin-bottom: 0;
+}
+
+.mi-section-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 4px;
+}
+
+.mi-section-header:hover {
+  background: var(--background-modifier-hover);
+}
+
+.mi-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mi-section-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-faint);
+  opacity: 0.6;
+  margin-left: 4px;
+}
+
+.mi-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-faint);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+/* Collapsed state */
+.mi-collapsed .mi-toggle {
+  transform: rotate(-90deg);
+}
+
+.mi-collapsed .mi-list {
+  display: none;
+}
+
+/* ── Meeting rows ── */
+
+.mi-list {
+  padding: 0 0 2px;
+}
+
+.mi-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-height: 30px;
+}
+
+.mi-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.mi-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.mi-doc-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--text-faint);
+  opacity: 0.55;
+}
+
+.mi-link {
+  font-size: 14px;
+  color: var(--text-normal) !important;
+  text-decoration: none !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mi-link:hover {
+  text-decoration: underline !important;
+  text-decoration-color: var(--text-faint) !important;
+}
+
+.mi-date {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-left: 16px;
+}
+
+/* ── Empty state ── */
+
+.mi-empty {
+  padding: 32px 4px;
+  font-size: 14px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+/* ── Mobile adjustments ── */
+@media (max-width: 600px) {
+  .mi-row {
+    padding: 6px 4px 6px 22px;
+  }
+  .mi-link {
+    font-size: 13px;
+  }
+  .mi-date {
+    font-size: 11px;
+    margin-left: 8px;
+  }
+}
