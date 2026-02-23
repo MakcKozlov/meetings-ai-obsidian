@@ -84,18 +84,16 @@ export default class MeetingsIndexWidget extends MarkdownRenderChild {
 
       for (const m of group.items) {
         const row = list.createDiv({ cls: 'mi-row' });
+
+        // Entire row is clickable
+        row.addEventListener('click', () => {
+          this.plugin.app.workspace.openLinkText(m.path, '', false);
+        });
+
         const left = row.createDiv({ cls: 'mi-row-left' });
         const docIcon = left.createSpan({ cls: 'mi-doc-icon' });
         docIcon.innerHTML = this.docSvg();
-        const link = left.createEl('a', {
-          text: m.name,
-          cls: 'mi-link',
-          href: m.path,
-        });
-        link.addEventListener('click', (e) => {
-          e.preventDefault();
-          this.plugin.app.workspace.openLinkText(m.path, '', false);
-        });
+        left.createSpan({ text: m.name, cls: 'mi-link' });
 
         const dateStr = moment(m.ctime).format('MMM D');
         row.createSpan({ text: dateStr, cls: 'mi-date' });

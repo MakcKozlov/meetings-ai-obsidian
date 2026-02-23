@@ -39,6 +39,11 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private activeTab: 'summary' | 'notes' | 'transcript' | 'audio' = 'summary';
   /** Accumulated results from multiple recordings */
   private results: ResultEntry[] = [];
+  /** Web Audio analyser for real-time spectrogram */
+  private audioContext: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analyserSource: MediaStreamAudioSourceNode | null = null;
+  private spectrogramAnimId: number | null = null;
   /** User notes content (persisted to note file) */
   private notesContent: string = '';
   /** Meeting description (persisted to note file) */
@@ -83,6 +88,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   onunload() {
     this.stopTimerInterval();
+    this.stopSpectrogram();
   }
 
   onload() {
@@ -391,7 +397,8 @@ export default class MeetingWidget extends MarkdownRenderChild {
       this.state.status === 'paused'
     ) {
       this.state = { ...this.state, elapsed: seconds };
-      const timerEl = this.wrapperEl.querySelector('.mm-elapsed');
+      // Update timer text inline — no re-render needed
+      const timerEl = this.wrapperEl.querySelector('.mm-rec-timer');
       if (timerEl) timerEl.textContent = this.formatTime(seconds);
     }
   }
@@ -417,6 +424,11 @@ export default class MeetingWidget extends MarkdownRenderChild {
   }
 
   private render() {
+    // Stop spectrogram animation (will be re-created if needed)
+    if (this.spectrogramAnimId !== null) {
+      cancelAnimationFrame(this.spectrogramAnimId);
+      this.spectrogramAnimId = null;
+    }
     this.wrapperEl.empty();
     this.wrapperEl.removeClass(
       'mm-state-idle',
@@ -430,13 +442,9 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
     switch (this.state.status) {
       case 'idle':
-        this.renderIdle();
-        break;
       case 'recording':
-        this.renderRecording();
-        break;
       case 'paused':
-        this.renderPaused();
+        this.renderIdle();
         break;
       case 'processing':
         this.renderProcessing();
@@ -450,153 +458,113 @@ export default class MeetingWidget extends MarkdownRenderChild {
     }
   }
 
-  // ─── Idle state ───
+  // ─── Idle / Recording / Paused state (unified card) ───
 
   private renderIdle() {
+    const isRecording = this.state.status === 'recording';
+    const isPaused = this.state.status === 'paused';
+    const isActive = isRecording || isPaused;
+
     const container = this.wrapperEl.createDiv({ cls: 'mm-idle-container' });
+    const card = container.createDiv({ cls: 'mm-card' });
 
-    // Toolbar: [Notes badge] ... [assistant?] [Start recording]
-    const toolbar = container.createDiv({ cls: 'mm-toolbar' });
+    if (this.results.length > 0 && !isActive) {
+      // Has previous results and not recording — show full tabs with Record button
+      this.renderTabs(card, true);
+    } else {
+      // Tab-like bar with controls
+      const tabRow = card.createDiv({ cls: 'mm-tab-row' });
+      const tabBar = tabRow.createDiv({ cls: 'mm-tab-bar' });
 
-    // Left side: Notes badge
-    const notesTag = toolbar.createDiv({ cls: 'mm-toolbar-tag' });
-    const tagIcon = notesTag.createSpan({ cls: 'mm-toolbar-tag-icon' });
-    tagIcon.innerHTML = this.notesSvg();
-    notesTag.createSpan({ text: 'Notes', cls: 'mm-toolbar-tag-label' });
+      if (isActive) {
+        // ── Recording/Paused controls ──
+        if (isRecording) {
+          // Pause button
+          const pauseBtn = tabBar.createEl('button', { cls: 'mm-tab mm-tab-rec-ctrl' });
+          pauseBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.pauseSvg();
+          pauseBtn.createSpan({ text: 'Pause', cls: 'mm-tab-label' });
+          pauseBtn.addEventListener('click', () => this.onPauseClick());
+        } else {
+          // Resume button
+          const resumeBtn = tabBar.createEl('button', { cls: 'mm-tab mm-tab-start' });
+          resumeBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.playSvg();
+          resumeBtn.createSpan({ text: 'Resume', cls: 'mm-tab-label' });
+          resumeBtn.addEventListener('click', () => this.onResumeClick());
+        }
 
-    // Right side
-    const toolbarRight = toolbar.createDiv({ cls: 'mm-toolbar-right' });
+        // Stop button
+        const stopBtn = tabBar.createEl('button', { cls: 'mm-tab mm-tab-stop' });
+        stopBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.stopSvg();
+        stopBtn.createSpan({ text: 'Stop', cls: 'mm-tab-label' });
+        stopBtn.addEventListener('click', () => this.onStopClick());
 
-    // Assistant selector (if more than one)
-    if (this.plugin.settings.assistants.length > 1) {
-      const select = toolbarRight.createEl('select', {
-        cls: 'mm-assistant-select dropdown',
-      });
-      for (const assistant of this.plugin.settings.assistants) {
-        const opt = select.createEl('option', {
-          text: assistant.name,
-          value: assistant.name,
+        // Timer
+        const elapsed = (this.state as any).elapsed ?? 0;
+        tabBar.createSpan({
+          text: this.formatTime(elapsed),
+          cls: 'mm-rec-timer',
         });
-        if (assistant.name === this.selectedAssistant) {
-          opt.selected = true;
+
+        // Mini live bars (5 bars that react to mic volume in real-time)
+        const miniBars = tabBar.createDiv({ cls: 'mm-mini-bars' });
+        for (let i = 0; i < 5; i++) {
+          miniBars.createDiv({ cls: 'mm-mini-bar' });
+        }
+      } else {
+        // ── Idle: Start recording pill ──
+        const startBtn = tabBar.createEl('button', { cls: 'mm-tab mm-tab-start' });
+        startBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.micSvg();
+        startBtn.createSpan({ text: 'Start recording', cls: 'mm-tab-label' });
+        startBtn.addEventListener('click', () => this.onStartClick());
+
+        // Delete button (trash) — next to start recording
+        this.renderTrashButton(tabBar);
+
+        // Assistant selector (if more than one)
+        if (this.plugin.settings.assistants.length > 1) {
+          const select = tabBar.createEl('select', {
+            cls: 'mm-assistant-select dropdown',
+          });
+          for (const assistant of this.plugin.settings.assistants) {
+            const opt = select.createEl('option', {
+              text: assistant.name,
+              value: assistant.name,
+            });
+            if (assistant.name === this.selectedAssistant) {
+              opt.selected = true;
+            }
+          }
+          select.addEventListener('change', () => {
+            this.selectedAssistant = select.value;
+          });
         }
       }
-      select.addEventListener('change', () => {
-        this.selectedAssistant = select.value;
+
+      // Right-side buttons: home + new meeting
+      const rightBtns = tabRow.createDiv({ cls: 'mm-tab-right-btns' });
+
+      const homeBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
+      homeBtn.innerHTML = this.homeSvg();
+      homeBtn.setAttribute('aria-label', 'All meetings');
+      homeBtn.addEventListener('click', () => {
+        this.plugin.openMeetingsIndex();
+      });
+
+      const newBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
+      newBtn.innerHTML = this.plusSvg();
+      newBtn.setAttribute('aria-label', 'New meeting');
+      newBtn.addEventListener('click', () => {
+        this.plugin.createMeetingNote();
       });
     }
 
-    const startBtn = toolbarRight.createEl('button', {
-      cls: 'mm-btn mm-btn-start',
-    });
-    const micIcon = startBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
-    micIcon.innerHTML = this.micSvg();
-    startBtn.createSpan({
-      text: 'Start recording',
-      cls: 'mm-btn-label',
-    });
-    startBtn.addEventListener('click', () => this.onStartClick());
-
-    // If we have previous results, show tabs below toolbar
-    if (this.results.length > 0) {
-      this.renderTabs(container);
+    // Start mini-bars analyser (no canvas, only mini-bars)
+    if (isActive) {
+      requestAnimationFrame(() => this.startMiniBarsAnalyser());
     }
 
     // Notes textarea — borderless Notion-style
-    this.renderInlineNotes(container, 8);
-  }
-
-  // ─── Recording state ───
-
-  private renderRecording() {
-    const state = this.state as { status: 'recording'; elapsed: number };
-    const container = this.wrapperEl.createDiv({
-      cls: 'mm-recording-container',
-    });
-
-    const topRow = container.createDiv({ cls: 'mm-top-row' });
-
-    const indicator = topRow.createDiv({ cls: 'mm-rec-indicator' });
-    indicator.createSpan({ cls: 'mm-rec-dot' });
-    indicator.createSpan({ text: 'Recording', cls: 'mm-rec-label' });
-
-    const waveform = topRow.createDiv({ cls: 'mm-waveform' });
-    for (let i = 0; i < 12; i++) {
-      const bar = waveform.createDiv({ cls: 'mm-waveform-bar' });
-      bar.style.animationDelay = `${i * 0.1}s`;
-    }
-
-    topRow.createSpan({
-      text: this.formatTime(state.elapsed),
-      cls: 'mm-elapsed',
-    });
-
-    const btnRow = container.createDiv({ cls: 'mm-btn-row' });
-
-    const pauseBtn = btnRow.createEl('button', {
-      cls: 'mm-btn mm-btn-pause',
-    });
-    pauseBtn.createSpan({ cls: 'mm-icon mm-icon-pause' }).innerHTML =
-      this.pauseSvg();
-    pauseBtn.createSpan({ text: 'Pause', cls: 'mm-btn-label' });
-    pauseBtn.addEventListener('click', () => this.onPauseClick());
-
-    const stopBtn = btnRow.createEl('button', {
-      cls: 'mm-btn mm-btn-stop',
-    });
-    stopBtn.createSpan({ cls: 'mm-icon mm-icon-stop' }).innerHTML =
-      this.stopSvg();
-    stopBtn.createSpan({ text: 'Stop', cls: 'mm-btn-label' });
-    stopBtn.addEventListener('click', () => this.onStopClick());
-
-    // Notes area during recording
-    this.renderInlineNotes(container);
-  }
-
-  // ─── Paused state ───
-
-  private renderPaused() {
-    const state = this.state as { status: 'paused'; elapsed: number };
-    const container = this.wrapperEl.createDiv({
-      cls: 'mm-paused-container',
-    });
-
-    const topRow = container.createDiv({ cls: 'mm-top-row' });
-
-    const indicator = topRow.createDiv({ cls: 'mm-rec-indicator mm-paused' });
-    indicator.createSpan({ cls: 'mm-rec-dot mm-paused' });
-    indicator.createSpan({ text: 'Paused', cls: 'mm-rec-label' });
-
-    const waveform = topRow.createDiv({ cls: 'mm-waveform mm-frozen' });
-    for (let i = 0; i < 12; i++) {
-      waveform.createDiv({ cls: 'mm-waveform-bar' });
-    }
-
-    topRow.createSpan({
-      text: this.formatTime(state.elapsed),
-      cls: 'mm-elapsed',
-    });
-
-    const btnRow = container.createDiv({ cls: 'mm-btn-row' });
-
-    const resumeBtn = btnRow.createEl('button', {
-      cls: 'mm-btn mm-btn-resume',
-    });
-    resumeBtn.createSpan({ cls: 'mm-icon mm-icon-play' }).innerHTML =
-      this.playSvg();
-    resumeBtn.createSpan({ text: 'Resume', cls: 'mm-btn-label' });
-    resumeBtn.addEventListener('click', () => this.onResumeClick());
-
-    const stopBtn = btnRow.createEl('button', {
-      cls: 'mm-btn mm-btn-stop',
-    });
-    stopBtn.createSpan({ cls: 'mm-icon mm-icon-stop' }).innerHTML =
-      this.stopSvg();
-    stopBtn.createSpan({ text: 'Stop', cls: 'mm-btn-label' });
-    stopBtn.addEventListener('click', () => this.onStopClick());
-
-    // Notes area during paused
-    this.renderInlineNotes(container);
+    this.renderInlineNotes(card, 8);
   }
 
   // ─── Inline notes (shared by idle, recording, paused) ───
@@ -677,18 +645,22 @@ export default class MeetingWidget extends MarkdownRenderChild {
     newBtn.addEventListener('click', () => this.onStartClick());
   }
 
-  // ─── Done state — tabs: Summary / Notes / Transcript ───
+  // ─── Done state — card with tabs ───
 
   private renderDone() {
     const container = this.wrapperEl.createDiv({ cls: 'mm-done-container' });
-    this.renderTabs(container);
+
+    // Card wrapper — no title, no record button
+    const card = container.createDiv({ cls: 'mm-card' });
+    this.renderTabs(card);
   }
 
-  private renderTabs(container: HTMLElement) {
+  private renderTabs(container: HTMLElement, showStartRecording = false) {
     const hasAudio = this.results.some((r) => r.audioFilePath);
 
-    // Tab bar with icons
-    const tabBar = container.createDiv({ cls: 'mm-tab-bar' });
+    // Tab bar — pill style
+    const tabRow = container.createDiv({ cls: 'mm-tab-row' });
+    const tabBar = tabRow.createDiv({ cls: 'mm-tab-bar' });
 
     const tabsLeft: { id: typeof this.activeTab; label: string; icon: string }[] = [
       { id: 'summary', label: 'Summary', icon: this.summarySvg() },
@@ -712,16 +684,36 @@ export default class MeetingWidget extends MarkdownRenderChild {
       });
     }
 
-    // "Record" button on the right side of tab bar (in done state)
-    if (this.state.status === 'done' || this.state.status === 'idle') {
-      const recordBtn = tabBar.createEl('button', {
-        cls: 'mm-btn mm-btn-start mm-tab-record',
-      });
-      const micIcon = recordBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
+    // Delete button (trash) — in tab bar, after tabs
+    this.renderTrashButton(tabBar);
+
+    // Right-side buttons
+    const rightBtns = tabRow.createDiv({ cls: 'mm-tab-right-btns' });
+
+    // Start Recording pill (when in idle with results)
+    if (showStartRecording) {
+      const startBtn = rightBtns.createEl('button', { cls: 'mm-tab mm-tab-start' });
+      const micIcon = startBtn.createSpan({ cls: 'mm-tab-icon' });
       micIcon.innerHTML = this.micSvg();
-      recordBtn.createSpan({ text: 'Record', cls: 'mm-btn-label' });
-      recordBtn.addEventListener('click', () => this.onStartClick());
+      startBtn.createSpan({ text: 'Record', cls: 'mm-tab-label' });
+      startBtn.addEventListener('click', () => this.onStartClick());
     }
+
+    // Home button — go to meetings index
+    const homeBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
+    homeBtn.innerHTML = this.homeSvg();
+    homeBtn.setAttribute('aria-label', 'All meetings');
+    homeBtn.addEventListener('click', () => {
+      this.plugin.openMeetingsIndex();
+    });
+
+    // New meeting button (+)
+    const newBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
+    newBtn.innerHTML = this.plusSvg();
+    newBtn.setAttribute('aria-label', 'New meeting');
+    newBtn.addEventListener('click', () => {
+      this.plugin.createMeetingNote();
+    });
 
     // Tab content
     const tabContent = container.createDiv({ cls: 'mm-tab-content' });
@@ -732,14 +724,30 @@ export default class MeetingWidget extends MarkdownRenderChild {
       case 'summary': {
         const summaryPanel = tabContent.createDiv({ cls: 'mm-tab-panel mm-summary-panel' });
 
-        // Rendered preview
-        const previewDiv = summaryPanel.createDiv({ cls: 'mm-summary-preview' });
-        previewDiv.innerHTML = this.markdownToHtml(allSummaries);
+        // User notes block — shown above AI summary if notes exist
+        if (this.notesContent.trim()) {
+          const notesBlock = summaryPanel.createDiv({ cls: 'mm-user-notes-block' });
+          notesBlock.createDiv({ text: 'Notes', cls: 'mm-user-notes-label' });
+          const notesText = notesBlock.createDiv({ cls: 'mm-user-notes-text' });
+          notesText.innerHTML = this.notesContent
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/\n/g, '<br>');
+        }
+
+        // Editable summary — contenteditable div with rendered HTML
+        const editableDiv = summaryPanel.createDiv({
+          cls: 'mm-summary-editable',
+          attr: { contenteditable: 'true' },
+        });
+        editableDiv.innerHTML = this.markdownToHtml(allSummaries);
 
         // Footnote click handler — switch to transcript and scroll
-        previewDiv.addEventListener('click', (e) => {
+        editableDiv.addEventListener('click', (e) => {
           const badge = (e.target as HTMLElement).closest('.mm-footnote-badge');
           if (!badge) return;
+          e.preventDefault();
           const segId = badge.getAttribute('data-segment-id');
           if (!segId) return;
           this.activeTab = 'transcript';
@@ -747,39 +755,17 @@ export default class MeetingWidget extends MarkdownRenderChild {
           this.render();
         });
 
-        // Edit button
-        const editBtn = summaryPanel.createEl('button', {
-          cls: 'mm-btn mm-btn-edit-summary',
+        // Auto-save on blur
+        editableDiv.addEventListener('blur', async () => {
+          // Convert edited HTML back to plain text for storage
+          const editedText = this.htmlToMarkdown(editableDiv);
+          if (this.results.length > 0 && editedText !== allSummaries) {
+            this.results[this.results.length - 1].summary = editedText;
+            MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
+            await this.saveResultsToFile();
+          }
         });
-        const editIcon = editBtn.createSpan({ cls: 'mm-icon' });
-        editIcon.innerHTML = this.editSvg();
-        editBtn.createSpan({ text: 'Edit summary', cls: 'mm-btn-label' });
-        editBtn.addEventListener('click', () => {
-          // Toggle: replace preview with textarea
-          previewDiv.style.display = 'none';
-          editBtn.style.display = 'none';
-          const editArea = summaryPanel.createEl('textarea', {
-            cls: 'mm-summary-textarea',
-            attr: { rows: '12' },
-          });
-          editArea.value = allSummaries;
 
-          const saveBtn = summaryPanel.createEl('button', {
-            cls: 'mm-btn mm-btn-save-summary',
-          });
-          saveBtn.createSpan({ text: 'Save', cls: 'mm-btn-label' });
-          saveBtn.addEventListener('click', async () => {
-            // Update the last result's summary with edited text
-            if (this.results.length > 0) {
-              this.results[this.results.length - 1].summary = editArea.value;
-              MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
-              await this.saveResultsToFile();
-            }
-            this.render();
-          });
-
-          editArea.focus();
-        });
         break;
       }
       case 'notes': {
@@ -974,12 +960,70 @@ export default class MeetingWidget extends MarkdownRenderChild {
     return html.join('');
   }
 
+  /** Convert contenteditable HTML back to markdown for storage */
+  private htmlToMarkdown(el: HTMLElement): string {
+    const lines: string[] = [];
+
+    const processNode = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent ?? '';
+        if (text.trim()) lines.push(text.trim());
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      const elem = node as HTMLElement;
+      const tag = elem.tagName.toLowerCase();
+
+      switch (tag) {
+        case 'h1':
+          lines.push(`# ${elem.textContent?.trim() ?? ''}`);
+          break;
+        case 'h2':
+          lines.push(`## ${elem.textContent?.trim() ?? ''}`);
+          break;
+        case 'h3':
+          lines.push(`### ${elem.textContent?.trim() ?? ''}`);
+          break;
+        case 'hr':
+          lines.push('---');
+          break;
+        case 'ul':
+          for (const li of Array.from(elem.children)) {
+            const checkbox = li.querySelector('.mm-task-checkbox') as HTMLInputElement | null;
+            const taskText = li.querySelector('.mm-task-text');
+            if (taskText) {
+              lines.push(`- ${taskText.textContent?.trim() ?? ''}`);
+            } else {
+              lines.push(`- ${li.textContent?.trim() ?? ''}`);
+            }
+          }
+          break;
+        case 'p':
+          lines.push(elem.textContent?.trim() ?? '');
+          break;
+        default:
+          // Recurse into children for divs, spans, etc.
+          for (const child of Array.from(elem.childNodes)) {
+            processNode(child);
+          }
+          break;
+      }
+    };
+
+    for (const child of Array.from(el.childNodes)) {
+      processNode(child);
+    }
+
+    return lines.join('\n');
+  }
+
   // ─── Event handlers ───
 
   private async onStartClick() {
     try {
-      this.setState({ status: 'recording', elapsed: 0 });
+      // Start recording FIRST so stream is available when render() calls startSpectrogram()
       await this.plugin.startMeetingRecording(this.selectedAssistant);
+      this.setState({ status: 'recording', elapsed: 0 });
       this.startTimerInterval();
     } catch (e: any) {
       console.error('Failed to start recording:', e);
@@ -1019,6 +1063,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private async onStopClick() {
     try {
       this.stopTimerInterval();
+      this.stopSpectrogram();
       this.setState({ status: 'processing', message: 'Transcribing audio...' });
 
       const result = await this.plugin.stopMeetingRecording();
@@ -1087,6 +1132,102 @@ export default class MeetingWidget extends MarkdownRenderChild {
     }
   }
 
+  // ─── Live Spectrogram (Web Audio API) ───
+
+  private startMiniBarsAnalyser(retryCount = 0) {
+    const stream = this.plugin.audioRecorderPublic?.stream;
+    if (!stream) {
+      if (retryCount < 10) {
+        setTimeout(() => this.startMiniBarsAnalyser(retryCount + 1), 100);
+      }
+      return;
+    }
+
+    try {
+      // Always create fresh AudioContext + analyser
+      if (this.analyserSource) {
+        try { this.analyserSource.disconnect(); } catch { /* ignore */ }
+        this.analyserSource = null;
+      }
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        try { this.audioContext.close(); } catch { /* ignore */ }
+      }
+
+      this.audioContext = new AudioContext();
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0.6;
+      this.analyserSource = this.audioContext.createMediaStreamSource(stream);
+      this.analyserSource.connect(this.analyser);
+
+      if (this.audioContext.state === 'suspended') {
+        this.audioContext.resume();
+      }
+
+      const analyser = this.analyser;
+      const freqData = new Uint8Array(analyser.frequencyBinCount);
+      const timeData = new Uint8Array(analyser.fftSize);
+      const miniBarsEl = this.wrapperEl.querySelectorAll('.mm-mini-bar');
+
+      const update = () => {
+        this.spectrogramAnimId = requestAnimationFrame(update);
+
+        if (this.state.status === 'paused') {
+          miniBarsEl.forEach((bar) => {
+            (bar as HTMLElement).style.height = '3px';
+          });
+          return;
+        }
+
+        analyser.getByteFrequencyData(freqData);
+        analyser.getByteTimeDomainData(timeData);
+
+        // RMS volume from time domain
+        let sum = 0;
+        for (let i = 0; i < timeData.length; i++) {
+          const v = (timeData[i] - 128) / 128;
+          sum += v * v;
+        }
+        const rms = Math.sqrt(sum / timeData.length);
+        const volume = Math.min(1, rms * 4);
+
+        // Update mini-bars
+        const bands = [4, 10, 20, 35, 55];
+        const maxBarH = 18;
+        const minBarH = 3;
+
+        bands.forEach((binIdx, i) => {
+          if (i >= miniBarsEl.length) return;
+          const freqVal = (freqData[binIdx] ?? 0) / 255;
+          const combined = Math.max(freqVal, volume * 0.8);
+          const h = Math.max(minBarH, combined * maxBarH);
+          (miniBarsEl[i] as HTMLElement).style.height = `${h}px`;
+        });
+      };
+
+      update();
+    } catch (err) {
+      console.warn('Meetings Ai: failed to start mini-bars analyser', err);
+    }
+  }
+
+  /** Full cleanup — disconnect audio nodes and close context */
+  private stopSpectrogram() {
+    if (this.spectrogramAnimId !== null) {
+      cancelAnimationFrame(this.spectrogramAnimId);
+      this.spectrogramAnimId = null;
+    }
+    if (this.analyserSource) {
+      try { this.analyserSource.disconnect(); } catch { /* ignore */ }
+      this.analyserSource = null;
+    }
+    this.analyser = null;
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      try { this.audioContext.close(); } catch { /* ignore */ }
+    }
+    this.audioContext = null;
+  }
+
   // ─── Timer ───
 
   startTimerInterval() {
@@ -1109,6 +1250,14 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private micSvg(): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>`;
+  }
+
+  private homeSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
+  }
+
+  private plusSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`;
   }
 
   private pauseSvg(): string {
@@ -1145,5 +1294,95 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private settingsSvg(): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>`;
+  }
+
+  private trashSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
+  }
+
+  // ─── Trash button with two-click confirmation ───
+
+  private renderTrashButton(parent: HTMLElement) {
+    const trashBtn = parent.createEl('button', { cls: 'mm-tab-settings-btn mm-tab-trash' });
+    trashBtn.innerHTML = this.trashSvg();
+    trashBtn.setAttribute('aria-label', 'Delete meeting');
+    let confirmTimeout: NodeJS.Timeout | null = null;
+
+    trashBtn.addEventListener('click', () => {
+      // Already in confirm state — execute delete
+      if (trashBtn.classList.contains('mm-tab-confirm-active')) {
+        if (confirmTimeout) clearTimeout(confirmTimeout);
+        this.deleteAllMeetingData();
+        return;
+      }
+      // Switch to confirm state
+      trashBtn.classList.add('mm-tab-confirm-active');
+      trashBtn.innerHTML = '';
+      trashBtn.createSpan({ text: 'Delete?', cls: 'mm-tab-label' });
+      // Auto-revert after 3 seconds
+      confirmTimeout = setTimeout(() => {
+        trashBtn.classList.remove('mm-tab-confirm-active');
+        trashBtn.innerHTML = this.trashSvg();
+        confirmTimeout = null;
+      }, 3000);
+    });
+  }
+
+  // ─── Delete all meeting data ───
+
+  private async deleteAllMeetingData() {
+    // Clear in-memory state
+    this.results = [];
+    this.notesContent = '';
+    this.meetingDescription = '';
+
+    // Clear static caches
+    MeetingWidget.resultCache.delete(this.ctx.sourcePath);
+    MeetingWidget.notesCache.delete(this.ctx.sourcePath);
+    MeetingWidget.descriptionCache.delete(this.ctx.sourcePath);
+    MeetingWidget.errorCache.delete(this.ctx.sourcePath);
+
+    // Remove all persisted data from file
+    await this.clearAllDataFromFile();
+
+    // Navigate to meetings index (main page)
+    this.plugin.openMeetingsIndex();
+  }
+
+  private async clearAllDataFromFile() {
+    const file = this.getNoteFile();
+    if (!file) return;
+
+    try {
+      let content = await this.plugin.app.vault.read(file);
+
+      // Remove all marker blocks
+      const markers: [string, string][] = [
+        [MeetingWidget.SUMMARY_START, MeetingWidget.SUMMARY_END],
+        [MeetingWidget.TRANSCRIPT_START, MeetingWidget.TRANSCRIPT_END],
+        [MeetingWidget.AUDIO_START, MeetingWidget.AUDIO_END],
+        [MeetingWidget.SEGMENTS_START, MeetingWidget.SEGMENTS_END],
+        [MeetingWidget.NOTES_START, MeetingWidget.NOTES_END],
+        [MeetingWidget.DESC_START, MeetingWidget.DESC_END],
+        [MeetingWidget.ERROR_START, MeetingWidget.ERROR_END],
+      ];
+
+      for (const [startMarker, endMarker] of markers) {
+        const startIdx = content.indexOf(startMarker);
+        const endIdx = content.indexOf(endMarker);
+        if (startIdx !== -1 && endIdx !== -1) {
+          let before = content.substring(0, startIdx);
+          let after = content.substring(endIdx + endMarker.length);
+          // Clean up surrounding newlines
+          if (before.endsWith('\n')) before = before.slice(0, -1);
+          if (after.startsWith('\n')) after = after.slice(1);
+          content = before + after;
+        }
+      }
+
+      await this.plugin.app.vault.modify(file, content);
+    } catch (e) {
+      console.warn('Meetings Ai: failed to clear data from file', e);
+    }
   }
 }

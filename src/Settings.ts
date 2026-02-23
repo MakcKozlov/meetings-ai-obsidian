@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 
 import MeetingAIPlugin from './Plugin';
 import { Model, models } from './summarizeTranscription';
@@ -13,6 +13,8 @@ export interface ISettings {
   outputFolder: string;
   audioFolder: string;
   dateFormat: string;
+  /** Selected microphone device ID (empty string = system default) */
+  microphoneDeviceId: string;
 }
 
 const defaultInstructions = `Ты — ассистент для ведения заметок со встреч. Твоя задача — создать краткое и структурированное резюме встречи по транскрипту.
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: ISettings = {
   outputFolder: 'Records',
   audioFolder: 'Records/Audio',
   dateFormat: 'DD.MM.YY',
+  microphoneDeviceId: '',
 };
 
 export default class Settings extends PluginSettingTab {
@@ -97,6 +100,75 @@ export default class Settings extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    // ── Microphone selector ──
+    const micSetting = new Setting(containerEl)
+      .setName('Microphone')
+      .setDesc('Select the microphone to use for recording meetings.');
+
+    const micDropdownContainer = micSetting.controlEl.createDiv({
+      cls: 'mm-mic-control',
+    });
+    const micSelect = micDropdownContainer.createEl('select', {
+      cls: 'dropdown',
+    });
+    // Default option
+    micSelect.createEl('option', {
+      text: 'System default',
+      value: '',
+    });
+
+    micSelect.addEventListener('change', async () => {
+      this.plugin.settings.microphoneDeviceId = micSelect.value;
+      await this.plugin.saveSettings();
+    });
+
+    // Refresh button
+    const refreshBtn = micDropdownContainer.createEl('button', {
+      cls: 'mm-mic-refresh-btn',
+      attr: { 'aria-label': 'Refresh microphone list' },
+    });
+    refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>`;
+
+    const loadMicrophones = async () => {
+      try {
+        // Request permission first (needed to get device labels)
+        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        tempStream.getTracks().forEach((t) => t.stop());
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+
+        // Clear existing options except "System default"
+        while (micSelect.options.length > 1) {
+          micSelect.remove(1);
+        }
+
+        for (const device of audioInputs) {
+          const label = device.label || `Microphone ${micSelect.options.length}`;
+          const opt = micSelect.createEl('option', {
+            text: label,
+            value: device.deviceId,
+          });
+          if (device.deviceId === this.plugin.settings.microphoneDeviceId) {
+            opt.selected = true;
+          }
+        }
+
+        // If saved device is still "System default"
+        if (!this.plugin.settings.microphoneDeviceId) {
+          micSelect.value = '';
+        }
+      } catch (err) {
+        console.error('Meetings Ai: failed to enumerate microphones', err);
+        new Notice('Failed to access microphone. Check browser permissions.');
+      }
+    };
+
+    refreshBtn.addEventListener('click', () => loadMicrophones());
+
+    // Load on display
+    loadMicrophones();
 
     const buildPreview = (fmt: string) => {
       const datePart = window.moment().format(fmt || 'DD.MM.YY').replace(/:/g, '.');

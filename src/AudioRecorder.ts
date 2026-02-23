@@ -23,6 +23,12 @@ export default class AudioRecorder {
 
   private mediaRecorder: MediaRecorder | null = null;
   private data: BlobPart[] = [];
+  private _stream: MediaStream | null = null;
+
+  /** Expose the active MediaStream for real-time audio analysis (AnalyserNode) */
+  get stream(): MediaStream | null {
+    return this._stream;
+  }
 
   constructor(opts: RecorderOptions = {}) {
     this.mimeType = pickMimeType(
@@ -60,12 +66,16 @@ export default class AudioRecorder {
     return rec;
   }
 
-  async start(): Promise<void> {
+  async start(deviceId?: string): Promise<void> {
     if (this.startedAt === null) {
       this.startedAt = moment().local();
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioConstraints: MediaTrackConstraints = deviceId
+        ? { deviceId: { exact: deviceId } }
+        : true;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      this._stream = stream;
       this.mediaRecorder = this.setupMediaRecorder(stream);
       this.mediaRecorder.start(1000); // collect data every 1s to avoid empty recordings on iOS
     } catch (err) {
@@ -107,6 +117,7 @@ export default class AudioRecorder {
 
         this.data = []; // reset the data
         this.mediaRecorder = null; // reset the recorder
+        this._stream = null;
 
         if (blob.size === 0) {
           reject(new Error('Recording produced empty audio data. Please try again.'));

@@ -193,7 +193,8 @@ export default class MeetingAI extends Plugin {
 
     // Reset recorder for a fresh recording
     this.audioRecorder = new AudioRecorder();
-    await this.audioRecorder.start();
+    const deviceId = this.settings.microphoneDeviceId || undefined;
+    await this.audioRecorder.start(deviceId);
 
     // Track the current note file
     this.meetingNoteFile =
@@ -558,7 +559,8 @@ export default class MeetingAI extends Plugin {
   // ═══════════════════════════════════════════
 
   startRecording() {
-    this.audioRecorder.start();
+    const deviceId = this.settings.microphoneDeviceId || undefined;
+    this.audioRecorder.start(deviceId);
     this.setNotice('Meetings Ai: recording');
   }
 
