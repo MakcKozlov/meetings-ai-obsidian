@@ -45,27 +45,23 @@ pre:has(> .meeting-ai-block) {
   gap: 12px;
 }
 
-.mm-idle-top-row {
+.mm-idle-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
 }
 
-.mm-idle-top-row .mm-inline-notes {
+.mm-spacer {
   flex: 1;
-}
-
-.mm-idle-top-row .mm-btn-start {
-  flex-shrink: 0;
-  align-self: flex-start;
 }
 
 /* ── Inline notes (shared by idle, recording, paused) ── */
 
 .mm-inline-notes {
   width: 100%;
-  min-height: 42px;
-  max-height: 200px;
+  min-height: 120px;
+  max-height: 300px;
   padding: 8px 12px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
@@ -585,12 +581,7 @@ pre:has(> .meeting-ai-block) {
   font-size: 13px;
 }
 
-.mm-btn-record-again {
-  align-self: center;
-  margin-top: 12px;
-  font-size: 13px;
-  padding: 6px 16px;
-}
+/* (record-again button moved to header row) */
 
 /* ─── Settings page — date format presets ─── */
 
@@ -670,33 +661,7 @@ pre:has(> .meeting-ai-block) {
   border-color: var(--interactive-accent-hover);
 }
 
-/* ─── Meeting Description ─── */
-
-.mm-description-row {
-  padding: 0 0 8px;
-}
-
-.mm-description-input {
-  width: 100%;
-  border: none;
-  background: none;
-  color: var(--text-normal);
-  font-size: 15px;
-  font-weight: 600;
-  padding: 4px 0;
-  outline: none;
-  border-bottom: 1px solid transparent;
-  font-family: var(--font-text);
-}
-
-.mm-description-input:focus {
-  border-bottom-color: var(--background-modifier-border);
-}
-
-.mm-description-input::placeholder {
-  color: var(--text-faint);
-  font-weight: 400;
-}
+/* (description row removed) */
 
 /* ─── Footnote Badges ─── */
 
