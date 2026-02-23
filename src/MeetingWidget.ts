@@ -455,17 +455,21 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private renderIdle() {
     const container = this.wrapperEl.createDiv({ cls: 'mm-idle-container' });
 
-    // Header row: title area + start button (top-right)
-    const headerRow = container.createDiv({ cls: 'mm-idle-header' });
+    // Toolbar: [Notes badge] ... [assistant?] [Start recording]
+    const toolbar = container.createDiv({ cls: 'mm-toolbar' });
 
-    // Assistant selector on the left (if more than one)
+    // Left side: Notes badge
+    const notesTag = toolbar.createDiv({ cls: 'mm-toolbar-tag' });
+    const tagIcon = notesTag.createSpan({ cls: 'mm-toolbar-tag-icon' });
+    tagIcon.innerHTML = this.notesSvg();
+    notesTag.createSpan({ text: 'Notes', cls: 'mm-toolbar-tag-label' });
+
+    // Right side
+    const toolbarRight = toolbar.createDiv({ cls: 'mm-toolbar-right' });
+
+    // Assistant selector (if more than one)
     if (this.plugin.settings.assistants.length > 1) {
-      const selectorRow = headerRow.createDiv({ cls: 'mm-assistant-row' });
-      selectorRow.createSpan({
-        text: 'Assistant:',
-        cls: 'mm-assistant-label',
-      });
-      const select = selectorRow.createEl('select', {
+      const select = toolbarRight.createEl('select', {
         cls: 'mm-assistant-select dropdown',
       });
       for (const assistant of this.plugin.settings.assistants) {
@@ -480,29 +484,26 @@ export default class MeetingWidget extends MarkdownRenderChild {
       select.addEventListener('change', () => {
         this.selectedAssistant = select.value;
       });
-    } else {
-      // Spacer to push button right
-      headerRow.createDiv({ cls: 'mm-spacer' });
     }
 
-    const startBtn = headerRow.createEl('button', {
+    const startBtn = toolbarRight.createEl('button', {
       cls: 'mm-btn mm-btn-start',
     });
     const micIcon = startBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
     micIcon.innerHTML = this.micSvg();
     startBtn.createSpan({
-      text: this.results.length > 0 ? 'Record' : 'Start',
+      text: 'Start recording',
       cls: 'mm-btn-label',
     });
     startBtn.addEventListener('click', () => this.onStartClick());
 
-    // If we have previous results, show tabs
+    // If we have previous results, show tabs below toolbar
     if (this.results.length > 0) {
       this.renderTabs(container);
     }
 
-    // Notes textarea (large)
-    this.renderInlineNotes(container, 6);
+    // Notes textarea — borderless Notion-style
+    this.renderInlineNotes(container, 8);
   }
 
   // ─── Recording state ───
@@ -680,18 +681,6 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private renderDone() {
     const container = this.wrapperEl.createDiv({ cls: 'mm-done-container' });
-
-    // Header row with Record again button top-right
-    const headerRow = container.createDiv({ cls: 'mm-idle-header' });
-    headerRow.createDiv({ cls: 'mm-spacer' });
-    const startBtn = headerRow.createEl('button', {
-      cls: 'mm-btn mm-btn-start',
-    });
-    const micIcon = startBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
-    micIcon.innerHTML = this.micSvg();
-    startBtn.createSpan({ text: 'Record', cls: 'mm-btn-label' });
-    startBtn.addEventListener('click', () => this.onStartClick());
-
     this.renderTabs(container);
   }
 
@@ -721,6 +710,17 @@ export default class MeetingWidget extends MarkdownRenderChild {
         this.activeTab = tab.id;
         this.render();
       });
+    }
+
+    // "Record" button on the right side of tab bar (in done state)
+    if (this.state.status === 'done' || this.state.status === 'idle') {
+      const recordBtn = tabBar.createEl('button', {
+        cls: 'mm-btn mm-btn-start mm-tab-record',
+      });
+      const micIcon = recordBtn.createSpan({ cls: 'mm-icon mm-icon-mic' });
+      micIcon.innerHTML = this.micSvg();
+      recordBtn.createSpan({ text: 'Record', cls: 'mm-btn-label' });
+      recordBtn.addEventListener('click', () => this.onStartClick());
     }
 
     // Tab content
