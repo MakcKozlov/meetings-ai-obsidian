@@ -71,10 +71,22 @@ export default class AudioRecorder {
       this.startedAt = moment().local();
     }
     try {
-      const audioConstraints: MediaTrackConstraints | boolean = deviceId
-        ? { deviceId: { exact: deviceId } }
-        : true;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      let stream: MediaStream;
+      if (deviceId) {
+        try {
+          // Try exact constraint first (reliable on Desktop/Electron)
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { deviceId: { exact: deviceId } },
+          });
+        } catch {
+          // Fallback: preferred deviceId without exact (works on iOS/mobile)
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: { deviceId: deviceId },
+          });
+        }
+      } else {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
       this._stream = stream;
       this.mediaRecorder = this.setupMediaRecorder(stream);
       this.mediaRecorder.start(1000); // collect data every 1s to avoid empty recordings on iOS

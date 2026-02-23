@@ -13,8 +13,8 @@ export interface ISettings {
   outputFolder: string;
   audioFolder: string;
   dateFormat: string;
-  /** Selected microphone device ID (empty string = system default) */
-  microphoneDeviceId: string;
+  /** @deprecated — microphone is now stored in localStorage per-device */
+  microphoneDeviceId?: string;
 }
 
 const defaultInstructions = `Ты — ассистент для ведения заметок со встреч. Твоя задача — создать краткое и структурированное резюме встречи по транскрипту.
@@ -53,8 +53,27 @@ export const DEFAULT_SETTINGS: ISettings = {
   outputFolder: 'Records',
   audioFolder: 'Records/Audio',
   dateFormat: 'DD.MM.YY',
-  microphoneDeviceId: '',
 };
+
+const MIC_STORAGE_KEY = 'meetings-ai-microphone-device-id';
+
+/** Get microphone deviceId from localStorage (per-device, not synced) */
+export function getLocalMicrophoneDeviceId(): string {
+  try {
+    return localStorage.getItem(MIC_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+/** Save microphone deviceId to localStorage (per-device, not synced) */
+export function setLocalMicrophoneDeviceId(deviceId: string): void {
+  try {
+    localStorage.setItem(MIC_STORAGE_KEY, deviceId);
+  } catch {
+    // localStorage unavailable on some platforms
+  }
+}
 
 export default class Settings extends PluginSettingTab {
   plugin: MeetingAIPlugin;
@@ -119,8 +138,7 @@ export default class Settings extends PluginSettingTab {
     });
 
     micSelect.addEventListener('change', async () => {
-      this.plugin.settings.microphoneDeviceId = micSelect.value;
-      await this.plugin.saveSettings();
+      setLocalMicrophoneDeviceId(micSelect.value);
     });
 
     // Refresh button
@@ -144,19 +162,20 @@ export default class Settings extends PluginSettingTab {
           micSelect.remove(1);
         }
 
+        const savedDeviceId = getLocalMicrophoneDeviceId();
         for (const device of audioInputs) {
           const label = device.label || `Microphone ${micSelect.options.length}`;
           const opt = micSelect.createEl('option', {
             text: label,
             value: device.deviceId,
           });
-          if (device.deviceId === this.plugin.settings.microphoneDeviceId) {
+          if (device.deviceId === savedDeviceId) {
             opt.selected = true;
           }
         }
 
         // If saved device is still "System default"
-        if (!this.plugin.settings.microphoneDeviceId) {
+        if (!savedDeviceId) {
           micSelect.value = '';
         }
       } catch (err) {

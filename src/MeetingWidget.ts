@@ -544,14 +544,14 @@ export default class MeetingWidget extends MarkdownRenderChild {
       const rightBtns = tabRow.createDiv({ cls: 'mm-tab-right-btns' });
 
       const homeBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
-      homeBtn.innerHTML = this.homeSvg();
+      homeBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.homeSvg();
       homeBtn.setAttribute('aria-label', 'All meetings');
       homeBtn.addEventListener('click', () => {
         this.plugin.openMeetingsIndex();
       });
 
       const newBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
-      newBtn.innerHTML = this.plusSvg();
+      newBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.plusSvg();
       newBtn.setAttribute('aria-label', 'New meeting');
       newBtn.addEventListener('click', () => {
         this.plugin.createMeetingNote();
@@ -701,7 +701,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
     // Home button — go to meetings index
     const homeBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
-    homeBtn.innerHTML = this.homeSvg();
+    homeBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.homeSvg();
     homeBtn.setAttribute('aria-label', 'All meetings');
     homeBtn.addEventListener('click', () => {
       this.plugin.openMeetingsIndex();
@@ -709,7 +709,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
     // New meeting button (+)
     const newBtn = rightBtns.createEl('button', { cls: 'mm-tab-settings-btn' });
-    newBtn.innerHTML = this.plusSvg();
+    newBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.plusSvg();
     newBtn.setAttribute('aria-label', 'New meeting');
     newBtn.addEventListener('click', () => {
       this.plugin.createMeetingNote();
@@ -1304,7 +1304,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private renderTrashButton(parent: HTMLElement) {
     const trashBtn = parent.createEl('button', { cls: 'mm-tab-settings-btn mm-tab-trash' });
-    trashBtn.innerHTML = this.trashSvg();
+    trashBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.trashSvg();
     trashBtn.setAttribute('aria-label', 'Delete meeting');
     let confirmTimeout: NodeJS.Timeout | null = null;
 
@@ -1322,7 +1322,8 @@ export default class MeetingWidget extends MarkdownRenderChild {
       // Auto-revert after 3 seconds
       confirmTimeout = setTimeout(() => {
         trashBtn.classList.remove('mm-tab-confirm-active');
-        trashBtn.innerHTML = this.trashSvg();
+        trashBtn.innerHTML = '';
+        trashBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.trashSvg();
         confirmTimeout = null;
       }, 3000);
     });

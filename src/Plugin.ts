@@ -8,7 +8,7 @@ import {
   moment,
   normalizePath,
 } from 'obsidian';
-import Settings, { type ISettings, DEFAULT_SETTINGS } from './Settings';
+import Settings, { type ISettings, DEFAULT_SETTINGS, getLocalMicrophoneDeviceId, setLocalMicrophoneDeviceId } from './Settings';
 import OpenAI from 'openai';
 import AudioRecorder from './AudioRecorder';
 import transcribeAudio, {
@@ -47,6 +47,12 @@ export default class MeetingAI extends Plugin {
     this.audioRecorder = new AudioRecorder();
 
     await this.loadSettings();
+
+    // Migrate microphoneDeviceId from synced data.json to local localStorage (one-time)
+    if (this.settings.microphoneDeviceId && !getLocalMicrophoneDeviceId()) {
+      setLocalMicrophoneDeviceId(this.settings.microphoneDeviceId);
+    }
+
     this.addSettingTab(new Settings(this.app, this));
     this.addRibbonIconMenu();
     this.addCommands();
@@ -193,7 +199,7 @@ export default class MeetingAI extends Plugin {
 
     // Reset recorder for a fresh recording
     this.audioRecorder = new AudioRecorder();
-    const deviceId = this.settings.microphoneDeviceId || undefined;
+    const deviceId = getLocalMicrophoneDeviceId() || undefined;
     await this.audioRecorder.start(deviceId);
 
     // Track the current note file
@@ -559,7 +565,7 @@ export default class MeetingAI extends Plugin {
   // ═══════════════════════════════════════════
 
   startRecording() {
-    const deviceId = this.settings.microphoneDeviceId || undefined;
+    const deviceId = getLocalMicrophoneDeviceId() || undefined;
     this.audioRecorder.start(deviceId);
     this.setNotice('Meetings Ai: recording');
   }
