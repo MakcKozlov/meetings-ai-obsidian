@@ -71,7 +71,7 @@ export default class AudioRecorder {
       this.startedAt = moment().local();
     }
     try {
-      const audioConstraints: MediaTrackConstraints = deviceId
+      const audioConstraints: MediaTrackConstraints | boolean = deviceId
         ? { deviceId: { exact: deviceId } }
         : true;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
