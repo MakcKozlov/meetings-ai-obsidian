@@ -2,9 +2,11 @@ import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 
 import MeetingAIPlugin from './Plugin';
 import { Model, models } from './summarizeTranscription';
+import type { TranscriptionModel } from './transcribeAudio';
 
 export interface ISettings {
   openaiApiKey: string;
+  transcriptionModel: TranscriptionModel;
   transcriptionHint: string;
   assistantModel: Model;
   assistants: { name: string; prompt: string }[];
@@ -45,6 +47,7 @@ const defaultInstructions = `Ты — ассистент для ведения �
 
 export const DEFAULT_SETTINGS: ISettings = {
   openaiApiKey: '',
+  transcriptionModel: 'gpt-4o-transcribe-diarize',
   transcriptionHint: '',
   assistantModel: 'gpt-4o',
   assistants: [{ name: 'Default', prompt: defaultInstructions }],
@@ -287,6 +290,26 @@ export default class Settings extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
     );
+    new Setting(containerEl)
+      .setName('Transcription model')
+      .setDesc(
+        'gpt-4o-transcribe-diarize identifies speakers in the recording. ' +
+          'whisper-1 is the classic model without speaker identification.',
+      )
+      .addDropdown((dropdown) => {
+        const options: Record<TranscriptionModel, string> = {
+          'gpt-4o-transcribe-diarize': 'gpt-4o-transcribe-diarize (speakers)',
+          'whisper-1': 'whisper-1 (classic)',
+        };
+        dropdown
+          .addOptions(options)
+          .setValue(this.plugin.settings.transcriptionModel)
+          .onChange(async (value: string) => {
+            this.plugin.settings.transcriptionModel = value as TranscriptionModel;
+            await this.plugin.saveSettings();
+          });
+      });
+
     new Setting(containerEl)
       .setName('Speech to text hints')
       .setDesc(

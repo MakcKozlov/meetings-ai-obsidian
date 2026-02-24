@@ -613,6 +613,13 @@ pre:has(> .meeting-ai-block) {
   color: var(--text-normal);
 }
 
+/* Icon-only button active state (e.g. Audio tab) */
+.mm-tab-icon-active {
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent, #fff) !important;
+  border-color: var(--interactive-accent) !important;
+}
+
 /* Trash button — confirm state (red pill) */
 
 .mm-tab-trash.mm-tab-confirm-active {
@@ -838,17 +845,141 @@ pre:has(> .meeting-ai-block) {
   color: var(--text-muted);
 }
 
-.mm-audio-player {
-  width: 100%;
-  height: 40px;
-  border-radius: 8px;
-  outline: none;
-}
-
 .mm-audio-empty {
   color: var(--text-faint);
   font-style: italic;
   font-size: 13px;
+}
+
+/* ─── Custom Player ─── */
+
+.mm-player {
+  background: var(--background-secondary);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ─── Progress bar ─── */
+
+.mm-player-progress {
+  position: relative;
+  height: 6px;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.mm-player-progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 3px;
+  width: 0%;
+  pointer-events: none;
+}
+
+.mm-player-progress-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0%;
+  width: 16px;
+  height: 16px;
+  background: var(--interactive-accent);
+  border: 2px solid var(--background-secondary);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mm-player-progress:hover .mm-player-progress-thumb,
+.mm-player-progress:active .mm-player-progress-thumb {
+  opacity: 1;
+}
+
+/* ─── Controls ─── */
+
+.mm-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mm-player-btn {
+  background: transparent !important;
+  border: none;
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.mm-player-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.mm-player-play {
+  width: 38px;
+  height: 38px;
+  background: var(--interactive-accent) !important;
+  color: var(--text-on-accent, #fff);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.mm-player-play:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.mm-player-skip {
+  color: var(--text-muted);
+  padding: 4px;
+}
+
+.mm-player-time {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  margin-left: 6px;
+}
+
+.mm-player-time-error {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.mm-player-spacer {
+  flex: 1;
+}
+
+.mm-player-speed {
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 36px;
+  color: var(--text-muted);
+  background: transparent !important;
+}
+
+.mm-player-dl {
+  color: var(--text-muted);
+  background: transparent !important;
 }
 
 /* (record button moved to card title row) */
@@ -965,6 +1096,15 @@ pre:has(> .meeting-ai-block) {
   border-color: var(--interactive-accent-hover);
 }
 
+/* Re-summarize pill — same style as tab bar pills but icon-only */
+.mm-tab-resummary {
+  color: var(--text-muted);
+}
+
+.mm-tab-resummary:hover {
+  color: var(--text-normal);
+}
+
 /* (description row removed) */
 
 /* ─── Footnote Badges ─── */
@@ -1033,6 +1173,60 @@ pre:has(> .meeting-ai-block) {
   0% { background: var(--text-highlight-bg); }
   70% { background: var(--text-highlight-bg); }
   100% { background: transparent; }
+}
+
+/* ─── Speaker Diarization ─── */
+
+.mm-speaker-pills {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding: 0 6px;
+}
+
+.mm-speaker-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border-radius: 12px;
+  background: var(--background-modifier-hover);
+  font-size: 0.82em;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.mm-speaker-pill:hover {
+  background: var(--background-modifier-active-hover);
+}
+
+.mm-speaker-pill-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--text-normal);
+  padding: 0;
+  width: auto;
+  min-width: 60px;
+}
+
+.mm-speaker-group {
+  margin-bottom: 4px;
+}
+
+.mm-speaker-label {
+  font-weight: 600;
+  font-size: 0.82em;
+  color: var(--text-accent);
+  margin: 10px 0 2px 6px;
+}
+
+.mm-speaker-group:first-child .mm-speaker-label {
+  margin-top: 0;
 }
 
 /* ─── Task Checkboxes ─── */

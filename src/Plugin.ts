@@ -634,14 +634,15 @@ export default class MeetingAI extends Plugin {
     if (!audioData)
       throw new Error('Must provide either an audio file or a buffer');
 
-    const audioFiles = await audioDataToChunkedFiles(
+    const audioChunks = await audioDataToChunkedFiles(
       audioData,
       this.MAX_CHUNK_SIZE,
     );
 
     return transcribeAudio(this.client, {
+      model: this.settings.transcriptionModel ?? 'gpt-4o-transcribe-diarize',
       prompt: this.settings.transcriptionHint,
-      audioFiles,
+      audioChunks,
       onChunkStart: (i, total) => {
         let message = 'Meetings Ai: transcribing';
         if (total > 1) message += ` ${i + 1}/${total}`;

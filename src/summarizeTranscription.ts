@@ -26,15 +26,35 @@ export type SummarizationResult =
   | { state: 'refused'; refusal: string }
   | { state: 'error'; error: Error };
 
+/**
+ * Format raw API speaker label into human-friendly form.
+ * Handles: "speaker_0" → "Speaker 1", "A" → "Speaker 1", "B" → "Speaker 2"
+ */
+function formatSpeakerLabel(raw: string): string {
+  const numMatch = raw.match(/^speaker_(\d+)$/i);
+  if (numMatch) return `Speaker ${parseInt(numMatch[1], 10) + 1}`;
+  const letterMatch = raw.match(/^([A-Z])$/i);
+  if (letterMatch) {
+    const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 64;
+    return `Speaker ${idx}`;
+  }
+  return raw;
+}
+
 export default async function summarizeTranscription(
   client: OpenAI,
   { completionModel, completionInstructions, transcript, segments }: SummarizationOptions,
 ): Promise<SummarizationResult> {
   // When segments are available, format transcript with [N] prefixes
-  // so the model can reference segment IDs in its summary
+  // so the model can reference segment IDs in its summary.
+  // Include speaker labels when available (from diarize model).
+  // Raw API labels like "speaker_0" are formatted as "Speaker 1" (1-indexed).
   let userContent: string;
   if (segments && segments.length > 0) {
-    userContent = segments.map((s) => `[${s.id}] ${s.text}`).join('\n');
+    userContent = segments.map((s) => {
+      const prefix = s.speaker ? `${formatSpeakerLabel(s.speaker)}: ` : '';
+      return `[${s.id}] ${prefix}${s.text}`;
+    }).join('\n');
   } else {
     userContent = transcript;
   }

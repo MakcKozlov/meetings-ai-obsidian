@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.2.0] — 2026-02-26
+
+### Speaker Diarization
+- Switched transcription model to **`gpt-4o-transcribe-diarize`** with speaker identification
+- Speaker labels displayed as **Speaker 1, Speaker 2** instead of raw API labels (`speaker_0`, `A`, `B`)
+- Editable speaker name pills — click to rename speakers, names persist across sessions
+- Speaker names applied consistently across transcript and summary
+
+### Custom Audio Player
+- Replaced default HTML `<audio>` element with a fully custom player
+- **Play/Pause** button with accent color styling
+- **±10 second** skip buttons for quick navigation
+- **Seekable progress bar** with thumb indicator (mouse and touch support)
+- **Playback speed** control: 1x → 1.25x → 1.5x → 2x
+- **Download button** — save audio files locally via browser download dialog (useful for syncing audio from iPad)
+- Time display with current position and total duration
+
+### Re-transcribe from Audio
+- **Re-process button** (refresh icon in tab bar) now performs full re-transcription + re-summarization when audio file is available
+- Falls back to re-summarization from existing segments when audio is missing
+- Useful for re-processing old meetings recorded with Whisper through the new `gpt-4o-transcribe-diarize` model
+
+### Multi-chunk Timestamp Fix
+- Fixed a bug where audio files split into multiple chunks had timestamps resetting to 0 for each chunk
+- Timestamps now correctly accumulate across chunks using chunk duration offsets
+- Introduced `AudioChunk` interface with `{ file, duration }` for proper offset tracking
+
+### Summary Footnote Preservation
+- Fixed footnote badges `{1,2,3}` disappearing after switching tabs in the summary view
+- Rewrote `htmlToMarkdown()` with recursive `inlineText()` helper that properly preserves footnote badge elements, bold, and italic formatting during content round-trips
+
+### iOS Keep-Alive
+- Added silent audio loop to prevent iOS from suspending the app during long recordings
+- Ensures uninterrupted recording on iPad and iPhone
+
+## [2.1.1] — 2026-02-24
+
+### Fixed
+- iOS keep-alive: prevent app suspension during recording with silent audio loop
+
 ## [2.1.0] — 2026-02-23
 
 ### Meetings Index — Home Page

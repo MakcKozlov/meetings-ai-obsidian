@@ -29,6 +29,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private static notesCache = new Map<string, string>();
   private static descriptionCache = new Map<string, string>();
   private static errorCache = new Map<string, { message: string; audioFilePath: string | null }>();
+  private static speakerMapCache = new Map<string, Record<string, string>>();
 
   private plugin: MeetingAIPlugin;
   private ctx: MarkdownPostProcessorContext;
@@ -50,6 +51,14 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private meetingDescription: string = '';
   /** Pending segment to scroll to after tab switch */
   private pendingScrollToSegment: number | null = null;
+  /** Speaker name mapping: e.g. { "speaker_0": "Наташа", "speaker_1": "Алена" } */
+  private speakerMap: Record<string, string> = {};
+  /** Debounced save for speaker map */
+  private saveSpeakerMapDebounced = debounce(
+    () => this.saveSpeakerMapToFile(),
+    500,
+    true,
+  );
   /** Debounced save for notes */
   private saveNotesDebounced = debounce(
     () => this.saveNotesToFile(),
@@ -97,11 +106,13 @@ export default class MeetingWidget extends MarkdownRenderChild {
     const cachedNotes = MeetingWidget.notesCache.get(this.ctx.sourcePath);
     const cachedDesc = MeetingWidget.descriptionCache.get(this.ctx.sourcePath);
     const cachedError = MeetingWidget.errorCache.get(this.ctx.sourcePath);
+    const cachedSpeakers = MeetingWidget.speakerMapCache.get(this.ctx.sourcePath);
 
     if (cachedResults && cachedResults.length > 0) {
       this.results = cachedResults;
       if (cachedNotes) this.notesContent = cachedNotes;
       if (cachedDesc) this.meetingDescription = cachedDesc;
+      if (cachedSpeakers) this.speakerMap = cachedSpeakers;
       const last = this.results[this.results.length - 1];
       this.state = {
         status: 'done',
@@ -141,6 +152,8 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private static readonly DESC_END = 'meeting-ai-description-end-->';
   private static readonly ERROR_START = '<!--meeting-ai-error';
   private static readonly ERROR_END = 'meeting-ai-error-end-->';
+  private static readonly SPEAKERS_START = '<!--meeting-ai-speakers';
+  private static readonly SPEAKERS_END = 'meeting-ai-speakers-end-->';
 
   /**
    * Resolve the TFile for this widget's note.
@@ -213,6 +226,15 @@ export default class MeetingWidget extends MarkdownRenderChild {
     let segments: TranscriptSegment[] = [];
     if (segmentsRaw) {
       try { segments = JSON.parse(segmentsRaw); } catch { /* backward compat */ }
+    }
+
+    // Load speaker map
+    const speakersRaw = MeetingWidget.extractBetween(content, MeetingWidget.SPEAKERS_START, MeetingWidget.SPEAKERS_END);
+    if (speakersRaw) {
+      try {
+        this.speakerMap = JSON.parse(speakersRaw);
+        MeetingWidget.speakerMapCache.set(this.ctx.sourcePath, { ...this.speakerMap });
+      } catch { /* ignore corrupt data */ }
     }
 
     // If we have summary or transcript, restore the result
@@ -312,6 +334,24 @@ export default class MeetingWidget extends MarkdownRenderChild {
     let content = await this.plugin.app.vault.read(file);
     content = MeetingWidget.replaceBlock(content, MeetingWidget.DESC_START, MeetingWidget.DESC_END, this.meetingDescription);
     await this.plugin.app.vault.modify(file, content);
+  }
+
+  private async saveSpeakerMapToFile() {
+    MeetingWidget.speakerMapCache.set(this.ctx.sourcePath, { ...this.speakerMap });
+    const file = this.getNoteFile();
+    if (!file) return;
+    try {
+      let content = await this.plugin.app.vault.read(file);
+      content = MeetingWidget.replaceBlock(
+        content,
+        MeetingWidget.SPEAKERS_START,
+        MeetingWidget.SPEAKERS_END,
+        JSON.stringify(this.speakerMap),
+      );
+      await this.plugin.app.vault.modify(file, content);
+    } catch (e) {
+      console.warn('Meetings Ai: failed to save speaker map', e);
+    }
   }
 
   private async saveErrorToFile(message: string, audioFilePath: string | null) {
@@ -667,9 +707,6 @@ export default class MeetingWidget extends MarkdownRenderChild {
       { id: 'notes', label: 'Notes', icon: this.notesSvg() },
       { id: 'transcript', label: 'Transcript', icon: this.transcriptSvg() },
     ];
-    if (hasAudio) {
-      tabsLeft.push({ id: 'audio', label: 'Audio', icon: this.audioSvg() });
-    }
 
     for (const tab of tabsLeft) {
       const tabEl = tabBar.createEl('button', {
@@ -677,11 +714,34 @@ export default class MeetingWidget extends MarkdownRenderChild {
       });
       const iconSpan = tabEl.createSpan({ cls: 'mm-tab-icon' });
       iconSpan.innerHTML = tab.icon;
-      tabEl.createSpan({ text: tab.label, cls: 'mm-tab-label' });
+      if (tab.label) tabEl.createSpan({ text: tab.label, cls: 'mm-tab-label' });
       tabEl.addEventListener('click', () => {
         this.activeTab = tab.id;
         this.render();
       });
+    }
+
+    // Icon-only buttons: Audio, Re-process, Trash
+    if (hasAudio) {
+      const audioBtn = tabBar.createEl('button', {
+        cls: `mm-tab-settings-btn ${this.activeTab === 'audio' ? 'mm-tab-icon-active' : ''}`,
+      });
+      audioBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.audioSvg();
+      audioBtn.setAttribute('aria-label', 'Audio');
+      audioBtn.addEventListener('click', () => {
+        this.activeTab = 'audio';
+        this.render();
+      });
+    }
+
+    // Re-process pill — re-transcribe from audio (if available) or re-summarize from segments
+    const hasSegments = this.results.some((r) => (r.segments ?? []).length > 0);
+    const hasAudioFile = this.results.some((r) => r.audioFilePath);
+    if (hasSegments || hasAudioFile) {
+      const reBtn = tabBar.createEl('button', { cls: 'mm-tab-settings-btn mm-tab-resummary' });
+      reBtn.createSpan({ cls: 'mm-tab-icon' }).innerHTML = this.refreshSvg();
+      reBtn.setAttribute('aria-label', hasAudioFile ? 'Re-transcribe & summarize' : 'Re-summarize');
+      reBtn.addEventListener('click', () => this.onResummarizeClick());
     }
 
     // Delete button (trash) — in tab bar, after tabs
@@ -718,7 +778,10 @@ export default class MeetingWidget extends MarkdownRenderChild {
     // Tab content
     const tabContent = container.createDiv({ cls: 'mm-tab-content' });
 
-    const allSummaries = this.results.map((r) => r.summary).join('\n\n---\n\n');
+    let allSummaries = this.results.map((r) => r.summary).join('\n\n---\n\n');
+
+    // Apply speaker name replacements to summary text
+    allSummaries = this.applySpeakerNames(allSummaries);
 
     switch (this.activeTab) {
       case 'summary': {
@@ -791,7 +854,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
         const transcriptPanel = tabContent.createDiv({
           cls: 'mm-tab-panel mm-transcript-panel',
         });
-        transcriptPanel.innerHTML = this.renderTranscriptContent();
+        this.renderTranscriptPanel(transcriptPanel);
 
         // Scroll to pending segment
         if (this.pendingScrollToSegment !== null) {
@@ -816,8 +879,51 @@ export default class MeetingWidget extends MarkdownRenderChild {
     }
   }
 
-  /** Render transcript: with segments (timestamped) or plain fallback */
-  private renderTranscriptContent(): string {
+  /**
+   * Format raw API speaker label into human-friendly form.
+   * Handles multiple formats returned by gpt-4o-transcribe-diarize:
+   *   "speaker_0" → "Speaker 1"  (numeric, 0-indexed)
+   *   "A" → "Speaker 1", "B" → "Speaker 2"  (single uppercase letter)
+   *   "@" or other → kept as-is
+   */
+  private static formatSpeakerLabel(raw: string): string {
+    // speaker_N format (0-indexed)
+    const numMatch = raw.match(/^speaker_(\d+)$/i);
+    if (numMatch) return `Speaker ${parseInt(numMatch[1], 10) + 1}`;
+    // Single letter A-Z format
+    const letterMatch = raw.match(/^([A-Z])$/i);
+    if (letterMatch) {
+      const idx = letterMatch[1].toUpperCase().charCodeAt(0) - 64; // A=1, B=2, ...
+      return `Speaker ${idx}`;
+    }
+    return raw;
+  }
+
+  /** Get display name for a speaker (uses speakerMap or formatted label) */
+  private getSpeakerDisplayName(speaker: string): string {
+    return this.speakerMap[speaker] || MeetingWidget.formatSpeakerLabel(speaker);
+  }
+
+  /** Replace speaker references in text with display names from speakerMap */
+  private applySpeakerNames(text: string): string {
+    for (const [key, name] of Object.entries(this.speakerMap)) {
+      if (!name) continue;
+      // Always replace the formatted label e.g. "Speaker 1" → "Наташа"
+      const formatted = MeetingWidget.formatSpeakerLabel(key);
+      const fmtEscaped = formatted.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(fmtEscaped, 'gi'), name);
+      // Also replace raw API label, but only if it's safe (not a single letter
+      // which would match random text). "speaker_0" is safe, "A" is not.
+      if (formatted !== key && key.length > 1) {
+        const rawEscaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        text = text.replace(new RegExp(rawEscaped, 'gi'), name);
+      }
+    }
+    return text;
+  }
+
+  /** Render transcript panel: speaker pills + grouped segments */
+  private renderTranscriptPanel(panel: HTMLElement): void {
     const allSegments = this.results.flatMap((r) => r.segments ?? []);
 
     if (allSegments.length === 0) {
@@ -825,21 +931,123 @@ export default class MeetingWidget extends MarkdownRenderChild {
       const allTranscripts = this.results
         .map((r) => r.transcript)
         .join('\n\n---\n\n');
-      return this.markdownToHtml(allTranscripts);
+      panel.innerHTML = this.markdownToHtml(allTranscripts);
+      return;
     }
 
-    // Render segments with timestamps and anchor IDs
-    return allSegments.map((seg) => {
-      const escaped = seg.text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-      const timestamp = this.formatTimestamp(seg.start);
-      return `<div class="mm-segment" data-segment-id="${seg.id}">` +
-        `<span class="mm-segment-time">${timestamp}</span>` +
-        `<span class="mm-segment-text">${escaped}</span>` +
-        `</div>`;
-    }).join('');
+    // Check if we have speaker data
+    const hasSpeakers = allSegments.some((s) => s.speaker);
+
+    // Speaker rename pills (only if diarized)
+    if (hasSpeakers) {
+      const uniqueSpeakers = [...new Set(allSegments.map((s) => s.speaker).filter(Boolean) as string[])];
+      const pillsRow = panel.createDiv({ cls: 'mm-speaker-pills' });
+      for (const spk of uniqueSpeakers) {
+        this.renderSpeakerPill(pillsRow, spk, panel);
+      }
+    }
+
+    // Render segments — grouped by speaker if available
+    const segContainer = panel.createDiv({ cls: 'mm-segments-container' });
+
+    if (hasSpeakers) {
+      // Group consecutive segments by same speaker
+      let currentSpeaker: string | null = null;
+      let groupEl: HTMLElement | null = null;
+
+      for (const seg of allSegments) {
+        const speaker = seg.speaker || 'unknown';
+        if (speaker !== currentSpeaker) {
+          currentSpeaker = speaker;
+          groupEl = segContainer.createDiv({ cls: 'mm-speaker-group' });
+          groupEl.createDiv({
+            text: this.getSpeakerDisplayName(speaker),
+            cls: 'mm-speaker-label',
+          });
+        }
+        this.renderSegmentDiv(groupEl!, seg);
+      }
+    } else {
+      // No speakers — flat list (legacy)
+      for (const seg of allSegments) {
+        this.renderSegmentDiv(segContainer, seg);
+      }
+    }
+  }
+
+  /** Render a single segment div */
+  private renderSegmentDiv(container: HTMLElement, seg: TranscriptSegment): void {
+    const segDiv = container.createDiv({ cls: 'mm-segment' });
+    segDiv.setAttribute('data-segment-id', String(seg.id));
+    segDiv.createSpan({
+      text: this.formatTimestamp(seg.start),
+      cls: 'mm-segment-time',
+    });
+    segDiv.createSpan({
+      text: seg.text,
+      cls: 'mm-segment-text',
+    });
+  }
+
+  /** Render a clickable speaker pill with inline rename */
+  private renderSpeakerPill(container: HTMLElement, speaker: string, transcriptPanel: HTMLElement): void {
+    const pill = container.createDiv({ cls: 'mm-speaker-pill' });
+    const nameSpan = pill.createSpan({ text: this.getSpeakerDisplayName(speaker) });
+
+    pill.addEventListener('click', () => {
+      // Already editing — ignore
+      if (pill.querySelector('input')) return;
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = this.getSpeakerDisplayName(speaker);
+      input.className = 'mm-speaker-pill-input';
+      input.size = Math.max(8, input.value.length + 2);
+
+      nameSpan.replaceWith(input);
+      input.focus();
+      input.select();
+
+      const commit = () => {
+        const newName = input.value.trim();
+        const defaultLabel = MeetingWidget.formatSpeakerLabel(speaker);
+        if (newName && newName !== speaker && newName !== defaultLabel) {
+          this.speakerMap[speaker] = newName;
+        } else if (!newName || newName === speaker || newName === defaultLabel) {
+          delete this.speakerMap[speaker];
+        }
+        this.saveSpeakerMapDebounced();
+
+        // Re-create the name span
+        const newSpan = document.createElement('span');
+        newSpan.textContent = this.getSpeakerDisplayName(speaker);
+        input.replaceWith(newSpan);
+
+        // Update all speaker labels in transcript
+        const labels = transcriptPanel.querySelectorAll('.mm-speaker-label');
+        labels.forEach((label) => {
+          // Check if this label matches the speaker
+          const parentGroup = label.parentElement;
+          if (!parentGroup) return;
+          const firstSeg = parentGroup.querySelector('.mm-segment');
+          if (!firstSeg) return;
+          // Find the speaker for the first segment in this group
+          const segId = firstSeg.getAttribute('data-segment-id');
+          if (segId === null) return;
+          const allSegs = this.results.flatMap((r) => r.segments ?? []);
+          const seg = allSegs.find((s) => s.id === parseInt(segId, 10));
+          if (seg?.speaker === speaker) {
+            label.textContent = this.getSpeakerDisplayName(speaker);
+          }
+        });
+      };
+
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { input.value = this.getSpeakerDisplayName(speaker); input.blur(); }
+      });
+    });
   }
 
   private renderAudioTab(tabContent: HTMLElement) {
@@ -868,14 +1076,184 @@ export default class MeetingWidget extends MarkdownRenderChild {
         });
       }
 
-      const audio = item.createEl('audio', {
-        cls: 'mm-audio-player',
-        attr: { controls: '' },
-      });
-
-      const resourcePath = this.plugin.app.vault.getResourcePath(file);
-      audio.src = resourcePath;
+      this.renderCustomPlayer(item, file);
     }
+  }
+
+  private renderCustomPlayer(container: HTMLElement, file: TFile) {
+    const player = container.createDiv({ cls: 'mm-player' });
+    const audio = new Audio();
+    audio.src = this.plugin.app.vault.getResourcePath(file);
+    audio.preload = 'metadata';
+
+    const speeds = [1, 1.25, 1.5, 2];
+    let speedIdx = 0;
+
+    const fmt = (sec: number) => {
+      if (!isFinite(sec) || isNaN(sec) || sec < 0) return '–:––';
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = Math.floor(sec % 60);
+      if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+      return `${m}:${s.toString().padStart(2, '0')}`;
+    };
+
+    // WebM files recorded by MediaRecorder often lack duration metadata.
+    // We resolve the real duration by seeking to a huge time, reading
+    // the clamped value, then seeking back.
+    const resolveDuration = () => {
+      if (isFinite(audio.duration) && audio.duration > 0) return;
+      const onTimeUpdate = () => {
+        if (audio.currentTime > 0) {
+          audio.removeEventListener('timeupdate', onTimeUpdate);
+          const realDuration = audio.currentTime;
+          audio.currentTime = 0;
+          // Store resolved duration for fmt
+          (audio as any).__resolvedDuration = realDuration;
+          timeEl.textContent = `0:00 / ${fmt(realDuration)}`;
+        }
+      };
+      audio.addEventListener('timeupdate', onTimeUpdate);
+      audio.currentTime = 1e10; // seek to near-end; browser clamps to real duration
+    };
+
+    const getDuration = () => {
+      const d = audio.duration;
+      if (isFinite(d) && d > 0) return d;
+      return (audio as any).__resolvedDuration ?? 0;
+    };
+
+    // ─── Progress bar (on top) ───
+    const progressWrap = player.createDiv({ cls: 'mm-player-progress' });
+    const progressFill = progressWrap.createDiv({ cls: 'mm-player-progress-fill' });
+    const progressThumb = progressWrap.createDiv({ cls: 'mm-player-progress-thumb' });
+
+    let dragging = false;
+
+    const seekTo = (e: MouseEvent | TouchEvent) => {
+      const rect = progressWrap.getBoundingClientRect();
+      const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const dur = getDuration();
+      if (dur > 0) audio.currentTime = pct * dur;
+    };
+
+    progressWrap.addEventListener('mousedown', (e) => { dragging = true; seekTo(e); });
+    progressWrap.addEventListener('touchstart', (e) => { dragging = true; seekTo(e); }, { passive: true });
+    document.addEventListener('mousemove', (e) => { if (dragging) seekTo(e); });
+    document.addEventListener('touchmove', (e) => { if (dragging) seekTo(e as any); }, { passive: true });
+    document.addEventListener('mouseup', () => { dragging = false; });
+    document.addEventListener('touchend', () => { dragging = false; });
+
+    // ─── Controls row ───
+    const controls = player.createDiv({ cls: 'mm-player-controls' });
+
+    // Play / pause
+    const playBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-play' });
+    playBtn.innerHTML = this.playSvg();
+    playBtn.addEventListener('click', () => {
+      if (audio.paused) { audio.play(); } else { audio.pause(); }
+    });
+
+    // Rewind 10s
+    const rwBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-skip' });
+    rwBtn.innerHTML = this.rewindSvg();
+    rwBtn.addEventListener('click', () => {
+      audio.currentTime = Math.max(0, audio.currentTime - 10);
+    });
+
+    // Forward 10s
+    const fwBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-skip' });
+    fwBtn.innerHTML = this.forwardSvg();
+    fwBtn.addEventListener('click', () => {
+      const dur = getDuration();
+      if (dur > 0) audio.currentTime = Math.min(dur, audio.currentTime + 10);
+    });
+
+    // Time display
+    const timeEl = controls.createEl('span', { cls: 'mm-player-time', text: '0:00 / –:––' });
+
+    // Spacer
+    controls.createDiv({ cls: 'mm-player-spacer' });
+
+    // Speed button
+    const speedBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-speed', text: '1x' });
+    speedBtn.addEventListener('click', () => {
+      speedIdx = (speedIdx + 1) % speeds.length;
+      audio.playbackRate = speeds[speedIdx];
+      speedBtn.textContent = `${speeds[speedIdx]}x`;
+    });
+
+    // Download button
+    const dlBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-dl' });
+    dlBtn.innerHTML = this.downloadSvg();
+    dlBtn.setAttribute('aria-label', 'Download audio');
+    dlBtn.addEventListener('click', async () => {
+      const data = await this.plugin.app.vault.readBinary(file);
+      const blob = new Blob([data]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      new Notice(`Downloaded ${file.name}`);
+    });
+
+    // ─── Events ───
+    audio.addEventListener('play', () => { playBtn.innerHTML = this.pauseSvg(); });
+    audio.addEventListener('pause', () => { playBtn.innerHTML = this.playSvg(); });
+    audio.addEventListener('ended', () => { playBtn.innerHTML = this.playSvg(); });
+
+    audio.addEventListener('timeupdate', () => {
+      const dur = getDuration();
+      const cur = audio.currentTime || 0;
+      const pct = dur > 0 ? (cur / dur) * 100 : 0;
+      progressFill.style.width = `${pct}%`;
+      progressThumb.style.left = `${pct}%`;
+      timeEl.textContent = `${fmt(cur)} / ${fmt(dur)}`;
+    });
+
+    audio.addEventListener('loadedmetadata', () => {
+      if (isFinite(audio.duration) && audio.duration > 0) {
+        timeEl.textContent = `0:00 / ${fmt(audio.duration)}`;
+      } else {
+        // WebM without duration header — resolve it
+        resolveDuration();
+      }
+    });
+
+    audio.addEventListener('error', () => {
+      timeEl.textContent = 'Audio not available';
+      timeEl.addClass('mm-player-time-error');
+      playBtn.disabled = true;
+      rwBtn.disabled = true;
+      fwBtn.disabled = true;
+    });
+  }
+
+  // ─── Player SVG icons ───
+
+  private playSvg(): string {
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>';
+  }
+
+  private pauseSvg(): string {
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>';
+  }
+
+  private rewindSvg(): string {
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v5h5"/><path d="M4 9a8 8 0 1 1 1.3 4.7"/></svg>';
+  }
+
+  private forwardSvg(): string {
+    return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 4v5h-5"/><path d="M20 9a8 8 0 1 0-1.3 4.7"/></svg>';
+  }
+
+  private downloadSvg(): string {
+    return '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
   }
 
   /** Simple markdown -> HTML with footnote badge support */
@@ -964,6 +1342,45 @@ export default class MeetingWidget extends MarkdownRenderChild {
   private htmlToMarkdown(el: HTMLElement): string {
     const lines: string[] = [];
 
+    /**
+     * Extract inline text from a node, preserving footnote badges as {id,id}
+     * and bold/italic formatting.
+     */
+    const inlineText = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return node.textContent ?? '';
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return '';
+      const elem = node as HTMLElement;
+
+      // Footnote group → {id,id}
+      if (elem.classList.contains('mm-footnote-group')) {
+        const ids = Array.from(elem.querySelectorAll('.mm-footnote-badge'))
+          .map((b) => b.getAttribute('data-segment-id') ?? b.textContent)
+          .filter(Boolean);
+        return `{${ids.join(',')}}`;
+      }
+      // Single footnote badge (not inside a group)
+      if (elem.classList.contains('mm-footnote-badge')) {
+        const id = elem.getAttribute('data-segment-id') ?? elem.textContent;
+        return `{${id}}`;
+      }
+
+      // Bold
+      if (elem.tagName === 'STRONG' || elem.tagName === 'B') {
+        const inner = Array.from(elem.childNodes).map(inlineText).join('');
+        return `**${inner}**`;
+      }
+      // Italic
+      if (elem.tagName === 'EM' || elem.tagName === 'I') {
+        const inner = Array.from(elem.childNodes).map(inlineText).join('');
+        return `*${inner}*`;
+      }
+
+      // Default: recurse into children
+      return Array.from(elem.childNodes).map(inlineText).join('');
+    };
+
     const processNode = (node: Node) => {
       if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent ?? '';
@@ -976,30 +1393,29 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
       switch (tag) {
         case 'h1':
-          lines.push(`# ${elem.textContent?.trim() ?? ''}`);
+          lines.push(`# ${inlineText(elem).trim()}`);
           break;
         case 'h2':
-          lines.push(`## ${elem.textContent?.trim() ?? ''}`);
+          lines.push(`## ${inlineText(elem).trim()}`);
           break;
         case 'h3':
-          lines.push(`### ${elem.textContent?.trim() ?? ''}`);
+          lines.push(`### ${inlineText(elem).trim()}`);
           break;
         case 'hr':
           lines.push('---');
           break;
         case 'ul':
           for (const li of Array.from(elem.children)) {
-            const checkbox = li.querySelector('.mm-task-checkbox') as HTMLInputElement | null;
             const taskText = li.querySelector('.mm-task-text');
             if (taskText) {
-              lines.push(`- ${taskText.textContent?.trim() ?? ''}`);
+              lines.push(`- ${inlineText(taskText).trim()}`);
             } else {
-              lines.push(`- ${li.textContent?.trim() ?? ''}`);
+              lines.push(`- ${inlineText(li).trim()}`);
             }
           }
           break;
         case 'p':
-          lines.push(elem.textContent?.trim() ?? '');
+          lines.push(inlineText(elem).trim());
           break;
         default:
           // Recurse into children for divs, spans, etc.
@@ -1097,6 +1513,72 @@ export default class MeetingWidget extends MarkdownRenderChild {
         message: e?.message ?? String(e),
         audioFilePath: null,
       });
+    }
+  }
+
+  /** Re-process: full re-transcription from audio if available, otherwise re-summarize from segments */
+  private async onResummarizeClick() {
+    // Check if we have an audio file to re-transcribe from
+    const audioFilePath = this.results.find((r) => r.audioFilePath)?.audioFilePath;
+
+    if (audioFilePath) {
+      // Full re-transcription + re-summarization from audio
+      const file = this.plugin.app.vault.getAbstractFileByPath(audioFilePath);
+      if (file && file instanceof TFile) {
+        await this.onRetryClick(audioFilePath);
+        return;
+      }
+      // Audio path exists but file is missing — fall through to segment-only re-summarize
+      new Notice('Meetings Ai: audio file not found, re-summarizing from transcript only');
+    }
+
+    // Fallback: re-summarize from existing segments
+    const allSegments = this.results.flatMap((r) => r.segments ?? []);
+    if (allSegments.length === 0) {
+      new Notice('Meetings Ai: no transcript segments to re-summarize');
+      return;
+    }
+
+    // Save current state so we can restore on error
+    const prevState = this.state;
+    try {
+      this.setState({ status: 'processing', message: 'Re-summarizing...' });
+
+      const fullText = allSegments.map((s) => s.text).join(' ');
+      const assistantName = this.selectedAssistant;
+
+      const summaryResult = await this.plugin.summarizeTranscript({
+        transcript: fullText,
+        segments: allSegments,
+        assistantName,
+      });
+
+      const summaryText =
+        summaryResult.state === 'success'
+          ? summaryResult.response
+          : summaryResult.state === 'refused'
+            ? `Summary refused: ${summaryResult.refusal}`
+            : `Summary error: ${summaryResult.error}`;
+
+      // Update the last result's summary
+      if (this.results.length > 0) {
+        this.results[this.results.length - 1].summary = summaryText;
+        MeetingWidget.resultCache.set(this.ctx.sourcePath, [...this.results]);
+        this.state = {
+          status: 'done',
+          summary: summaryText,
+          transcript: this.results[this.results.length - 1].transcript,
+        };
+        this.activeTab = 'summary';
+        this.render();
+        await this.saveResultsToFile();
+      }
+    } catch (e: any) {
+      console.error('Meetings Ai: re-summarize failed', e);
+      new Notice(`Meetings Ai: ${e?.message ?? e}`);
+      // Restore previous state
+      this.state = prevState;
+      this.render();
     }
   }
 
@@ -1234,6 +1716,14 @@ export default class MeetingWidget extends MarkdownRenderChild {
     this.stopTimerInterval();
     this.timerInterval = setInterval(() => {
       if (this.plugin.audioRecorderPublic) {
+        // Check if iOS/system killed the recording while screen was locked
+        if (this.plugin.audioRecorderPublic.wasInterrupted) {
+          this.stopTimerInterval();
+          this.stopSpectrogram();
+          new Notice('Recording was interrupted (screen lock or system). Audio data up to that point was preserved.');
+          this.setState({ status: 'idle' });
+          return;
+        }
         this.updateElapsed(this.plugin.audioRecorderPublic.elapsedSeconds);
       }
     }, 200);
@@ -1296,6 +1786,10 @@ export default class MeetingWidget extends MarkdownRenderChild {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>`;
   }
 
+  private refreshSvg(): string {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>`;
+  }
+
   private trashSvg(): string {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
   }
@@ -1336,12 +1830,14 @@ export default class MeetingWidget extends MarkdownRenderChild {
     this.results = [];
     this.notesContent = '';
     this.meetingDescription = '';
+    this.speakerMap = {};
 
     // Clear static caches
     MeetingWidget.resultCache.delete(this.ctx.sourcePath);
     MeetingWidget.notesCache.delete(this.ctx.sourcePath);
     MeetingWidget.descriptionCache.delete(this.ctx.sourcePath);
     MeetingWidget.errorCache.delete(this.ctx.sourcePath);
+    MeetingWidget.speakerMapCache.delete(this.ctx.sourcePath);
 
     // Remove all persisted data from file
     await this.clearAllDataFromFile();
@@ -1366,6 +1862,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
         [MeetingWidget.NOTES_START, MeetingWidget.NOTES_END],
         [MeetingWidget.DESC_START, MeetingWidget.DESC_END],
         [MeetingWidget.ERROR_START, MeetingWidget.ERROR_END],
+        [MeetingWidget.SPEAKERS_START, MeetingWidget.SPEAKERS_END],
       ];
 
       for (const [startMarker, endMarker] of markers) {

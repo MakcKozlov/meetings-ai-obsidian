@@ -1,14 +1,22 @@
 import { toFile } from 'openai';
 import { FileLike } from 'openai/uploads';
 
+export interface AudioChunk {
+  file: FileLike;
+  /** Duration of this chunk in seconds */
+  duration: number;
+}
+
 /**
  * Given an input file, converts it to mono, splits that mono audio into chunks
  * of a maximum size, and re-encodes the chunks as WAV files.
+ * Returns both the files and their durations (needed for timestamp correction
+ * when API responses have per-chunk timestamps starting from 0).
  */
 export default async function audioDataToChunkedFiles(
   audioData: ArrayBuffer,
   maxSize: number,
-): Promise<FileLike[]> {
+): Promise<AudioChunk[]> {
   const audioContext = new window.AudioContext();
   const sourceBuffer = await audioContext.decodeAudioData(audioData);
   const monoBuffer = audioBufferToMono(audioContext, sourceBuffer);
@@ -17,7 +25,7 @@ export default async function audioDataToChunkedFiles(
   const chunkSamples = Math.floor(maxSize / 4); // 32-bit float = 4 bytes
   const nChunks = Math.ceil(monoBuffer.length / chunkSamples);
 
-  const files: FileLike[] = [];
+  const chunks: AudioChunk[] = [];
 
   for (let i = 0; i < nChunks; i++) {
     const startSample = i * chunkSamples;
@@ -38,10 +46,13 @@ export default async function audioDataToChunkedFiles(
     const wavArrayBuffer = audioBufferToWav(chunkBuffer);
     const file = await toFile(wavArrayBuffer, fileName(i, 'wav'));
 
-    files.push(file);
+    chunks.push({
+      file,
+      duration: chunkBuffer.duration,
+    });
   }
 
-  return files;
+  return chunks;
 }
 
 /**
