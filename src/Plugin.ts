@@ -87,7 +87,7 @@ export default class MeetingAI extends Plugin {
       'meeting-ai',
       (source, el, ctx) => {
         console.log('Meetings Ai: code block processor called');
-        const widget = new MeetingWidget(el, this, ctx);
+        const widget = new MeetingWidget(el, this, ctx, source);
         ctx.addChild(widget);
         this.activeWidget = widget;
       },
@@ -276,7 +276,7 @@ export default class MeetingAI extends Plugin {
   }
 
   /** Retry transcription + summarization from a previously saved audio file */
-  async retryFromAudioFile(audioFilePath: string): Promise<
+  async retryFromAudioFile(audioFilePath: string, assistantName?: string): Promise<
     | { ok: true; summary: string; transcript: string; segments: TranscriptSegment[]; audioFilePath: string }
     | { ok: false; error: string }
   > {
@@ -288,10 +288,11 @@ export default class MeetingAI extends Plugin {
     try {
       const transcriptionResult = await this.transcribeAudio({ audioFile: audioFile as TFile });
 
+      const resolvedAssistant = assistantName || this.meetingAssistantName || this.settings.assistants[0]?.name || 'Default';
       const summaryResult = await this.summarizeTranscript({
         transcript: transcriptionResult.text,
         segments: transcriptionResult.segments,
-        assistantName: this.meetingAssistantName,
+        assistantName: resolvedAssistant,
       });
 
       const summaryText =

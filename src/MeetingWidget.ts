@@ -76,13 +76,22 @@ export default class MeetingWidget extends MarkdownRenderChild {
     containerEl: HTMLElement,
     plugin: MeetingAIPlugin,
     ctx: MarkdownPostProcessorContext,
+    source?: string,
   ) {
     super(containerEl);
     this.plugin = plugin;
     this.ctx = ctx;
     this.wrapperEl = containerEl.createDiv({ cls: 'meeting-ai-widget' });
+
+    // Parse assistant name from code block source (e.g. "assistant: Default")
+    const sourceAssistant = source
+      ?.split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.startsWith('assistant:'))
+      ?.replace('assistant:', '')
+      .trim();
     this.selectedAssistant =
-      plugin.settings.assistants[0]?.name ?? 'Default';
+      sourceAssistant || (plugin.settings.assistants[0]?.name ?? 'Default');
 
     // Prevent Live Preview from switching to source mode on click
     this.wrapperEl.addEventListener('mousedown', (e) => {
@@ -1150,7 +1159,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
     // Play / pause
     const playBtn = controls.createEl('button', { cls: 'mm-player-btn mm-player-play' });
-    playBtn.innerHTML = this.playSvg();
+    playBtn.innerHTML = this.playerPlaySvg();
     playBtn.addEventListener('click', () => {
       if (audio.paused) { audio.play(); } else { audio.pause(); }
     });
@@ -1203,9 +1212,9 @@ export default class MeetingWidget extends MarkdownRenderChild {
     });
 
     // ─── Events ───
-    audio.addEventListener('play', () => { playBtn.innerHTML = this.pauseSvg(); });
-    audio.addEventListener('pause', () => { playBtn.innerHTML = this.playSvg(); });
-    audio.addEventListener('ended', () => { playBtn.innerHTML = this.playSvg(); });
+    audio.addEventListener('play', () => { playBtn.innerHTML = this.playerPauseSvg(); });
+    audio.addEventListener('pause', () => { playBtn.innerHTML = this.playerPlaySvg(); });
+    audio.addEventListener('ended', () => { playBtn.innerHTML = this.playerPlaySvg(); });
 
     audio.addEventListener('timeupdate', () => {
       const dur = getDuration();
@@ -1236,11 +1245,11 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   // ─── Player SVG icons ───
 
-  private playSvg(): string {
+  private playerPlaySvg(): string {
     return '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>';
   }
 
-  private pauseSvg(): string {
+  private playerPauseSvg(): string {
     return '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="3" width="4" height="18"/><rect x="15" y="3" width="4" height="18"/></svg>';
   }
 
@@ -1437,6 +1446,13 @@ export default class MeetingWidget extends MarkdownRenderChild {
 
   private async onStartClick() {
     try {
+      // Pre-create AudioContext in user gesture context (required on iOS)
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new AudioContext();
+      }
+      if (this.audioContext.state === 'suspended') {
+        await this.audioContext.resume();
+      }
       // Start recording FIRST so stream is available when render() calls startSpectrogram()
       await this.plugin.startMeetingRecording(this.selectedAssistant);
       this.setState({ status: 'recording', elapsed: 0 });
@@ -1586,7 +1602,7 @@ export default class MeetingWidget extends MarkdownRenderChild {
     try {
       this.setState({ status: 'processing', message: 'Повторная расшифровка...' });
 
-      const result = await this.plugin.retryFromAudioFile(audioFilePath);
+      const result = await this.plugin.retryFromAudioFile(audioFilePath, this.selectedAssistant);
 
       if (result.ok) {
         await this.addResult(
@@ -1626,16 +1642,16 @@ export default class MeetingWidget extends MarkdownRenderChild {
     }
 
     try {
-      // Always create fresh AudioContext + analyser
+      // Disconnect previous analyser source if any
       if (this.analyserSource) {
         try { this.analyserSource.disconnect(); } catch { /* ignore */ }
         this.analyserSource = null;
       }
-      if (this.audioContext && this.audioContext.state !== 'closed') {
-        try { this.audioContext.close(); } catch { /* ignore */ }
-      }
 
-      this.audioContext = new AudioContext();
+      // Reuse AudioContext created during user gesture (onStartClick), or create new
+      if (!this.audioContext || this.audioContext.state === 'closed') {
+        this.audioContext = new AudioContext();
+      }
       this.analyser = this.audioContext.createAnalyser();
       this.analyser.fftSize = 256;
       this.analyser.smoothingTimeConstant = 0.6;
