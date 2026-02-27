@@ -12,17 +12,30 @@ export interface AudioChunk {
  * of a maximum size, and re-encodes the chunks as WAV files.
  * Returns both the files and their durations (needed for timestamp correction
  * when API responses have per-chunk timestamps starting from 0).
+ *
+ * Fast path: if the raw audioData already fits within maxSize (e.g. a compressed
+ * WebM/Opus file), it is sent directly as a single chunk — no decoding or
+ * re-encoding needed.
  */
 export default async function audioDataToChunkedFiles(
   audioData: ArrayBuffer,
   maxSize: number,
+  fileExtension: string = 'wav',
 ): Promise<AudioChunk[]> {
+  // Fast path: compressed audio already fits within the API limit
+  if (audioData.byteLength <= maxSize) {
+    const file = await toFile(audioData, fileName(0, fileExtension));
+    return [{ file, duration: 0 }];
+  }
+
+  // Slow path: decode, convert to mono, split into WAV chunks
   const audioContext = new window.AudioContext();
   const sourceBuffer = await audioContext.decodeAudioData(audioData);
   const monoBuffer = audioBufferToMono(audioContext, sourceBuffer);
 
-  // Calculate chunk size in terms of samples (maxSize is in bytes)
-  const chunkSamples = Math.floor(maxSize / 4); // 32-bit float = 4 bytes
+  // Calculate chunk size in samples: WAV output is 16-bit PCM (2 bytes/sample)
+  // with a 44-byte header per chunk
+  const chunkSamples = Math.floor((maxSize - 44) / 2);
   const nChunks = Math.ceil(monoBuffer.length / chunkSamples);
 
   const chunks: AudioChunk[] = [];

@@ -226,6 +226,7 @@ export default class MeetingAI extends Plugin {
 
     // Stop recording
     const startedAt = must(this.audioRecorder.startedAt);
+    const fileExtension = this.audioRecorder.fileExtension;
     const blob = await this.audioRecorder.stop();
     const buffer = await blob.arrayBuffer();
 
@@ -243,7 +244,7 @@ export default class MeetingAI extends Plugin {
 
     // Transcribe + Summarize — may fail from network
     try {
-      const transcriptionResult = await this.transcribeAudio({ buffer, audioFile });
+      const transcriptionResult = await this.transcribeAudio({ buffer, audioFile, fileExtension });
 
       const summaryResult = await this.summarizeTranscript({
         transcript: transcriptionResult.text,
@@ -286,7 +287,7 @@ export default class MeetingAI extends Plugin {
     }
 
     try {
-      const transcriptionResult = await this.transcribeAudio({ audioFile: audioFile as TFile });
+      const transcriptionResult = await this.transcribeAudio({ audioFile: audioFile as TFile, fileExtension: (audioFile as TFile).extension });
 
       const resolvedAssistant = assistantName || this.meetingAssistantName || this.settings.assistants[0]?.name || 'Default';
       const summaryResult = await this.summarizeTranscript({
@@ -591,6 +592,7 @@ export default class MeetingAI extends Plugin {
     this.assertHasOpenAiKey();
 
     const startedAt = must(this.audioRecorder.startedAt);
+    const fileExtension = this.audioRecorder.fileExtension;
     const blob = await this.audioRecorder.stop();
     const buffer = await blob.arrayBuffer();
 
@@ -602,7 +604,7 @@ export default class MeetingAI extends Plugin {
       : undefined;
 
     this.audioRecorder = new AudioRecorder(); //reset the recorder
-    return { buffer, audioFile, startedAt };
+    return { buffer, audioFile, startedAt, fileExtension };
   }
 
   // ═══════════════════════════════════════════
@@ -625,9 +627,11 @@ export default class MeetingAI extends Plugin {
   async transcribeAudio({
     buffer,
     audioFile,
+    fileExtension,
   }: {
     audioFile?: TFile;
     buffer?: ArrayBuffer;
+    fileExtension?: string;
   }): Promise<TranscriptionResult> {
     const audioData =
       buffer ?? (audioFile ? await this.app.vault.readBinary(audioFile) : null);
@@ -635,9 +639,11 @@ export default class MeetingAI extends Plugin {
     if (!audioData)
       throw new Error('Must provide either an audio file or a buffer');
 
+    const ext = fileExtension ?? audioFile?.extension ?? 'wav';
     const audioChunks = await audioDataToChunkedFiles(
       audioData,
       this.MAX_CHUNK_SIZE,
+      ext,
     );
 
     return transcribeAudio(this.client, {
@@ -969,7 +975,7 @@ export default class MeetingAI extends Plugin {
 
     this.setNotice('Meetings Ai: processing');
     const buffer = await this.app.vault.readBinary(audioFile);
-    const transcriptionResult = await this.transcribeAudio({ audioFile, buffer });
+    const transcriptionResult = await this.transcribeAudio({ audioFile, buffer, fileExtension: audioFile.extension });
     const summary = await this.summarizeTranscript({
       transcript: transcriptionResult.text,
       segments: transcriptionResult.segments,
@@ -991,8 +997,8 @@ export default class MeetingAI extends Plugin {
   }): Promise<TFile> {
     this.assertHasOpenAiKey();
 
-    const { buffer, audioFile, startedAt } = await this.finishRecording();
-    const transcriptionResult = await this.transcribeAudio({ buffer, audioFile });
+    const { buffer, audioFile, startedAt, fileExtension } = await this.finishRecording();
+    const transcriptionResult = await this.transcribeAudio({ buffer, audioFile, fileExtension });
     const summary = await this.summarizeTranscript({
       transcript: transcriptionResult.text,
       segments: transcriptionResult.segments,
